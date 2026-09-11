@@ -2,8 +2,8 @@
 
 @keyframes bounce-in {
   0% { transform: scale(0); opacity: 0; }
-  50% { transform: scale(1.15); }
-  70% { transform: scale(0.95); }
+  50% { transform: scale(1.2); }
+  70% { transform: scale(0.9); }
   100% { transform: scale(1); opacity: 1; }
 }
 
@@ -19,7 +19,7 @@
 
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  50% { transform: translateY(-10px); }
 }
 
 .animate-bounce-in {
@@ -39,42 +39,42 @@
 }
 
 /* Custom scrollbar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: rgba(255, 255, 255, 0.05);
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: rgba(167, 139, 250, 0.3);
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: rgba(167, 139, 250, 0.5);
 }
 
-/* SVG piece hover effects */
+/* SVG interactions */
 svg g.cursor-pointer {
-  transition: transform 0.15s ease;
+  transition: filter 0.15s ease;
 }
 
 svg g.cursor-pointer:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.15);
+}
+
+/* Prevent text selection */
+svg {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Smooth transitions */
 * {
   -webkit-tap-highlight-color: transparent;
-}
-
-/* Prevent text selection during gameplay */
-svg {
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 html, body {

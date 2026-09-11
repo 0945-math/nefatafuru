@@ -1,113 +1,24 @@
 // AI for Morabaraba - Minimax with Alpha-Beta Pruning
 import {
   Board, Player, GameState, ADJACENCY, MILLS,
-  getMillsForPosition, isInMill, canRemovePiece,
-  getValidMoves, isFlying, hasValidMoves,
+  isInMill, canRemovePiece,
+  isFlying, hasValidMoves,
   getValidPlacements, getRemovablePieces,
-  countPieces, countMills,
 } from './gameLogic';
 
-const DEPTH_MAP = { easy: 2, normal: 3, hard: 5 };
+const DEPTH_MAP = { easy: 2, normal: 3, hard: 4 };
 
-// Positional weights - center and intersection points are more valuable
+// Position weights - center and intersections are more valuable
 const POS_WEIGHT: number[] = [
-  2, 3, 2,   // corners of outer
-  3, 4, 3,   // mid of outer edges
-  4, 5, 4,   // inner corners
-  2, 3, 4,   // outer left, mid, inner
-  4, 3, 2,   // inner, mid, outer right
-  4, 5, 4,   // inner bottom corners
-  3, 4, 3,   // mid of bottom edges
-  2, 3, 2,   // corners of bottom
+  2, 3, 2,
+  3, 5, 3,
+  4, 5, 4,
+  2, 4, 5,
+  5, 4, 2,
+  4, 5, 4,
+  3, 5, 3,
+  2, 3, 2,
 ];
-
-// Evaluate board state for AI (player 2)
-function evaluate(state: {
-  board: Board;
-  piecesToPlace: [number, number];
-  piecesOnBoard: [number, number];
-}): number {
-  const { board, piecesToPlace, piecesOnBoard } = state;
-
-  // Terminal states
-  const p1Total = piecesToPlace[0] + piecesOnBoard[0];
-  const p2Total = piecesToPlace[1] + piecesOnBoard[1];
-  if (p1Total < 3) return 100000;
-  if (p2Total < 3) return -100000;
-
-  if (piecesToPlace[0] === 0 && piecesToPlace[1] === 0) {
-    if (!hasValidMoves(board, 1)) return 100000;
-    if (!hasValidMoves(board, 2)) return -100000;
-  }
-
-  let score = 0;
-
-  // 1. Material (piece count) - very important
-  const p1Pieces = piecesOnBoard[0];
-  const p2Pieces = piecesOnBoard[1];
-  score += (p2Pieces - p1Pieces) * 800;
-
-  // Pieces to place advantage
-  score += (piecesToPlace[1] - piecesToPlace[0]) * 200;
-
-  // 2. Mills formed
-  const p1Mills = countMills(board, 1);
-  const p2Mills = countMills(board, 2);
-  score += (p2Mills - p1Mills) * 400;
-
-  // 3. Two-in-a-row potential (close to forming a mill)
-  for (const mill of MILLS) {
-    const p1Count = mill.filter(p => board[p] === 1).length;
-    const p2Count = mill.filter(p => board[p] === 2).length;
-    const emptyCount = mill.filter(p => board[p] === 0).length;
-
-    if (p2Count === 2 && emptyCount === 1) score += 150;
-    if (p1Count === 2 && emptyCount === 1) score -= 150;
-    if (p2Count === 1 && emptyCount === 2) score += 30;
-    if (p1Count === 1 && emptyCount === 2) score -= 30;
-  }
-
-  // 4. Positional value
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === 2) score += POS_WEIGHT[i] * 25;
-    if (board[i] === 1) score -= POS_WEIGHT[i] * 25;
-  }
-
-  // 5. Mobility (in moving phase)
-  if (piecesToPlace[0] === 0 && piecesToPlace[1] === 0) {
-    const p1Flying = isFlying(board, 1);
-    const p2Flying = isFlying(board, 2);
-    const p1Moves = getValidMoves(board, 1, p1Flying).length;
-    const p2Moves = getValidMoves(board, 2, p2Flying).length;
-    score += (p2Moves - p1Moves) * 15;
-
-    // Flying is powerful
-    if (p2Flying && !p1Flying) score += 300;
-    if (p1Flying && !p2Flying) score -= 300;
-  }
-
-  // 6. Blocking opponent mills
-  for (const mill of MILLS) {
-    const p1Count = mill.filter(p => board[p] === 1).length;
-    const p2Count = mill.filter(p => board[p] === 2).length;
-
-    // If we block an opponent's potential mill
-    if (p1Count === 2 && p2Count === 1) score += 80;
-    if (p2Count === 2 && p1Count === 1) score -= 80;
-  }
-
-  // 7. Double mill potential (two mills sharing a piece)
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === 0) continue;
-    const player = board[i] as Player;
-    const millsThrough = getMillsForPosition(board, i, player);
-    if (millsThrough.length >= 2) {
-      score += player === 2 ? 200 : -200;
-    }
-  }
-
-  return score;
-}
 
 interface Move {
   type: 'place' | 'move';
@@ -125,12 +36,19 @@ function generateMoves(board: Board, player: Player, piecesToPlace: [number, num
     }
   } else {
     const flying = isFlying(board, player);
-    const validMoves = getValidMoves(board, player, flying);
-    for (const [from, to] of validMoves) {
-      moves.push({ type: 'move', from, to });
+    for (let from = 0; from < 24; from++) {
+      if (board[from] !== player) continue;
+      if (flying) {
+        for (let to = 0; to < 24; to++) {
+          if (board[to] === 0 && from !== to) moves.push({ type: 'move', from, to });
+        }
+      } else {
+        for (const to of ADJACENCY[from]) {
+          if (board[to] === 0) moves.push({ type: 'move', from, to });
+        }
+      }
     }
   }
-
   return moves;
 }
 
@@ -151,7 +69,22 @@ function formsMill(board: Board, pos: number, player: Player): boolean {
   );
 }
 
-// Smart removal: pick the piece that hurts opponent most
+function countMills(board: Board, player: Player): number {
+  let count = 0;
+  for (const mill of MILLS) {
+    if (mill.every(p => board[p] === player)) count++;
+  }
+  return count;
+}
+
+function countPieces(board: Board, player: Player): number {
+  let count = 0;
+  for (let i = 0; i < 24; i++) {
+    if (board[i] === player) count++;
+  }
+  return count;
+}
+
 function getBestRemoval(board: Board, removingPlayer: Player): number {
   const opponent: Player = removingPlayer === 1 ? 2 : 1;
   const removable = getRemovablePieces(board, opponent);
@@ -164,39 +97,73 @@ function getBestRemoval(board: Board, removingPlayer: Player): number {
 
   for (const pos of removable) {
     let score = 0;
-
-    // How many mills does this piece participate in?
-    const millsThrough = getMillsForPosition(board, pos, opponent);
-    score -= millsThrough.length * 300; // removing from a mill is less valuable
-
-    // How many potential 2-in-a-rows does this piece contribute to?
+    // Prefer removing pieces that are part of potential mills
     for (const mill of MILLS) {
       if (!mill.includes(pos)) continue;
-      const oppInMill = mill.filter(p => board[p] === opponent).length;
-      if (oppInMill === 2) score -= 100; // part of a near-mill
+      const oppCount = mill.filter(p => board[p] === opponent).length;
+      if (oppCount === 2) score += 100;
     }
-
-    // Positional value
-    score -= POS_WEIGHT[pos] * 10;
-
-    // How many adjacent pieces does it have? (more = more connected = more valuable to remove)
+    // Prefer removing pieces at valuable positions
+    score += POS_WEIGHT[pos] * 15;
+    // Prefer removing pieces with many connections
     const adjOwn = ADJACENCY[pos].filter(a => board[a] === opponent).length;
-    score -= adjOwn * 30;
-
-    // Prefer removing pieces that enable opponent flying prevention
-    const oppCount = countPieces(board, opponent);
-    if (oppCount === 4) {
-      // Removing this could prevent flying next turn
-      score += 50;
-    }
+    score += adjOwn * 25;
 
     if (score > bestScore) {
       bestScore = score;
       bestPiece = pos;
     }
   }
-
   return bestPiece;
+}
+
+function evaluate(board: Board, piecesToPlace: [number, number], piecesOnBoard: [number, number]): number {
+  const p1Total = piecesToPlace[0] + piecesOnBoard[0];
+  const p2Total = piecesToPlace[1] + piecesOnBoard[1];
+  if (p1Total < 3) return 100000;
+  if (p2Total < 3) return -100000;
+
+  if (piecesToPlace[0] === 0 && piecesToPlace[1] === 0) {
+    if (!hasValidMoves(board, 1)) return 100000;
+    if (!hasValidMoves(board, 2)) return -100000;
+  }
+
+  let score = 0;
+
+  // Material
+  score += (piecesOnBoard[1] - piecesOnBoard[0]) * 800;
+  score += (piecesToPlace[1] - piecesToPlace[0]) * 200;
+
+  // Mills
+  score += (countMills(board, 2) - countMills(board, 1)) * 500;
+
+  // Two-in-a-row potential
+  for (const mill of MILLS) {
+    const p2 = mill.filter(p => board[p] === 2).length;
+    const p1 = mill.filter(p => board[p] === 1).length;
+    const empty = mill.filter(p => board[p] === 0).length;
+    if (p2 === 2 && empty === 1) score += 150;
+    if (p1 === 2 && empty === 1) score -= 150;
+  }
+
+  // Position
+  for (let i = 0; i < 24; i++) {
+    if (board[i] === 2) score += POS_WEIGHT[i] * 20;
+    if (board[i] === 1) score -= POS_WEIGHT[i] * 20;
+  }
+
+  // Mobility
+  if (piecesToPlace[0] === 0 && piecesToPlace[1] === 0) {
+    const f1 = isFlying(board, 1);
+    const f2 = isFlying(board, 2);
+    const m1 = generateMoves(board, 1, piecesToPlace).length;
+    const m2 = generateMoves(board, 2, piecesToPlace).length;
+    score += (m2 - m1) * 10;
+    if (f2 && !f1) score += 250;
+    if (f1 && !f2) score -= 250;
+  }
+
+  return score;
 }
 
 function minimax(
@@ -210,7 +177,6 @@ function minimax(
 ): number {
   const player: Player = isMaximizing ? 2 : 1;
 
-  // Terminal states
   const p1Total = piecesToPlace[0] + piecesOnBoard[0];
   const p2Total = piecesToPlace[1] + piecesOnBoard[1];
   if (p1Total < 3) return 100000 + depth;
@@ -221,64 +187,37 @@ function minimax(
     if (!hasValidMoves(board, 2)) return -100000 - depth;
   }
 
-  if (depth === 0) {
-    return evaluate({ board, piecesToPlace, piecesOnBoard });
-  }
+  if (depth === 0) return evaluate(board, piecesToPlace, piecesOnBoard);
 
   const moves = generateMoves(board, player, piecesToPlace);
-  if (moves.length === 0) {
-    return isMaximizing ? -100000 - depth : 100000 + depth;
-  }
+  if (moves.length === 0) return isMaximizing ? -100000 - depth : 100000 + depth;
 
-  // Move ordering: prioritize moves that form mills
+  // Move ordering
   const millMoves: Move[] = [];
-  const blockingMoves: Move[] = [];
   const otherMoves: Move[] = [];
-
   for (const move of moves) {
     const testBoard = applyMove(board, move, player);
-    if (formsMill(testBoard, move.to, player)) {
-      millMoves.push(move);
-    } else {
-      // Check if blocking opponent's near-mill
-      let isBlocking = false;
-      for (const mill of MILLS) {
-        if (mill.includes(move.to)) {
-          const opp: Player = player === 1 ? 2 : 1;
-          const oppCount = mill.filter(p => board[p] === opp).length;
-          if (oppCount === 2) { isBlocking = true; break; }
-        }
-      }
-      if (isBlocking) blockingMoves.push(move);
-      else otherMoves.push(move);
-    }
+    if (formsMill(testBoard, move.to, player)) millMoves.push(move);
+    else otherMoves.push(move);
   }
-
-  const orderedMoves = [...millMoves, ...blockingMoves, ...otherMoves];
+  const ordered = [...millMoves, ...otherMoves];
 
   if (isMaximizing) {
     let maxEval = -Infinity;
-    for (const move of orderedMoves) {
+    for (const move of ordered) {
       const newBoard = applyMove(board, move, player);
-      const newPTP: [number, number] = [...piecesToPlace];
-      const newPOB: [number, number] = [...piecesOnBoard];
-      newPTP[1]--;
-      newPOB[1]++;
+      const nPTP: [number, number] = [...piecesToPlace];
+      const nPOB: [number, number] = [...piecesOnBoard];
+      if (move.type === 'place') { nPTP[1]--; nPOB[1]++; }
 
       let evalScore: number;
-      const newBoardAfterRemoval = [...newBoard] as Board;
-
       if (formsMill(newBoard, move.to, player)) {
-        const removal = getBestRemoval(newBoard, player);
-        if (removal >= 0) {
-          newBoardAfterRemoval[removal] = 0;
-          newPOB[0]--;
-        }
-        evalScore = minimax(newBoardAfterRemoval, depth - 1, alpha, beta, false, newPTP, newPOB);
+        const rem = getBestRemoval(newBoard, player);
+        if (rem >= 0) { newBoard[rem] = 0; nPOB[0]--; }
+        evalScore = minimax(newBoard, depth - 1, alpha, beta, false, nPTP, nPOB);
       } else {
-        evalScore = minimax(newBoard, depth - 1, alpha, beta, false, newPTP, newPOB);
+        evalScore = minimax(newBoard, depth - 1, alpha, beta, false, nPTP, nPOB);
       }
-
       maxEval = Math.max(maxEval, evalScore);
       alpha = Math.max(alpha, evalScore);
       if (beta <= alpha) break;
@@ -286,27 +225,20 @@ function minimax(
     return maxEval;
   } else {
     let minEval = Infinity;
-    for (const move of orderedMoves) {
+    for (const move of ordered) {
       const newBoard = applyMove(board, move, player);
-      const newPTP: [number, number] = [...piecesToPlace];
-      const newPOB: [number, number] = [...piecesOnBoard];
-      newPTP[0]--;
-      newPOB[0]++;
+      const nPTP: [number, number] = [...piecesToPlace];
+      const nPOB: [number, number] = [...piecesOnBoard];
+      if (move.type === 'place') { nPTP[0]--; nPOB[0]++; }
 
       let evalScore: number;
-      const newBoardAfterRemoval = [...newBoard] as Board;
-
       if (formsMill(newBoard, move.to, player)) {
-        const removal = getBestRemoval(newBoard, player);
-        if (removal >= 0) {
-          newBoardAfterRemoval[removal] = 0;
-          newPOB[1]--;
-        }
-        evalScore = minimax(newBoardAfterRemoval, depth - 1, alpha, beta, true, newPTP, newPOB);
+        const rem = getBestRemoval(newBoard, player);
+        if (rem >= 0) { newBoard[rem] = 0; nPOB[1]--; }
+        evalScore = minimax(newBoard, depth - 1, alpha, beta, true, nPTP, nPOB);
       } else {
-        evalScore = minimax(newBoard, depth - 1, alpha, beta, true, newPTP, newPOB);
+        evalScore = minimax(newBoard, depth - 1, alpha, beta, true, nPTP, nPOB);
       }
-
       minEval = Math.min(minEval, evalScore);
       beta = Math.min(beta, evalScore);
       if (beta <= alpha) break;
@@ -329,56 +261,43 @@ export function getAIMove(state: GameState, difficulty: 'easy' | 'normal' | 'har
 
   if (moves.length === 0) return null;
 
-  // Easy mode: 40% random moves
+  // Easy: 40% random
   if (difficulty === 'easy' && Math.random() < 0.4) {
-    const randomMove = moves[Math.floor(Math.random() * moves.length)];
-    const result: AIMove = { type: randomMove.type, to: randomMove.to };
-    if (randomMove.from !== undefined) result.from = randomMove.from;
-    const testBoard = applyMove(state.board, randomMove, player);
-    if (formsMill(testBoard, randomMove.to, player)) {
-      result.removal = getBestRemoval(testBoard, player);
-    }
+    const m = moves[Math.floor(Math.random() * moves.length)];
+    const result: AIMove = { type: m.type, to: m.to };
+    if (m.from !== undefined) result.from = m.from;
+    const tb = applyMove(state.board, m, player);
+    if (formsMill(tb, m.to, player)) result.removal = getBestRemoval(tb, player);
     return result;
   }
 
-  // Normal mode: 15% random moves
-  if (difficulty === 'normal' && Math.random() < 0.15) {
-    const randomMove = moves[Math.floor(Math.random() * moves.length)];
-    const result: AIMove = { type: randomMove.type, to: randomMove.to };
-    if (randomMove.from !== undefined) result.from = randomMove.from;
-    const testBoard = applyMove(state.board, randomMove, player);
-    if (formsMill(testBoard, randomMove.to, player)) {
-      result.removal = getBestRemoval(testBoard, player);
-    }
+  // Normal: 10% random
+  if (difficulty === 'normal' && Math.random() < 0.1) {
+    const m = moves[Math.floor(Math.random() * moves.length)];
+    const result: AIMove = { type: m.type, to: m.to };
+    if (m.from !== undefined) result.from = m.from;
+    const tb = applyMove(state.board, m, player);
+    if (formsMill(tb, m.to, player)) result.removal = getBestRemoval(tb, player);
     return result;
   }
 
-  let bestMove: Move = moves[0];
+  let bestMove = moves[0];
   let bestScore = -Infinity;
-  const allScores: { move: Move; score: number }[] = [];
 
   for (const move of moves) {
     const newBoard = applyMove(state.board, move, player);
-    const newPTP: [number, number] = [...state.piecesToPlace];
-    const newPOB: [number, number] = [...state.piecesOnBoard];
-    newPTP[1]--;
-    newPOB[1]++;
+    const nPTP: [number, number] = [...state.piecesToPlace];
+    const nPOB: [number, number] = [...state.piecesOnBoard];
+    if (move.type === 'place') { nPTP[1]--; nPOB[1]++; }
 
     let score: number;
-    const newBoardAfterRemoval = [...newBoard] as Board;
-
     if (formsMill(newBoard, move.to, player)) {
-      const removal = getBestRemoval(newBoard, player);
-      if (removal >= 0) {
-        newBoardAfterRemoval[removal] = 0;
-        newPOB[0]--;
-      }
-      score = minimax(newBoardAfterRemoval, maxDepth - 1, -Infinity, Infinity, false, newPTP, newPOB);
+      const rem = getBestRemoval(newBoard, player);
+      if (rem >= 0) { newBoard[rem] = 0; nPOB[0]--; }
+      score = minimax(newBoard, maxDepth - 1, -Infinity, Infinity, false, nPTP, nPOB);
     } else {
-      score = minimax(newBoard, maxDepth - 1, -Infinity, Infinity, false, newPTP, newPOB);
+      score = minimax(newBoard, maxDepth - 1, -Infinity, Infinity, false, nPTP, nPOB);
     }
-
-    allScores.push({ move, score });
 
     if (score > bestScore) {
       bestScore = score;
@@ -388,11 +307,8 @@ export function getAIMove(state: GameState, difficulty: 'easy' | 'normal' | 'har
 
   const result: AIMove = { type: bestMove.type, to: bestMove.to };
   if (bestMove.from !== undefined) result.from = bestMove.from;
-
-  const testBoard = applyMove(state.board, bestMove, player);
-  if (formsMill(testBoard, bestMove.to, player)) {
-    result.removal = getBestRemoval(testBoard, player);
-  }
+  const tb = applyMove(state.board, bestMove, player);
+  if (formsMill(tb, bestMove.to, player)) result.removal = getBestRemoval(tb, player);
 
   return result;
 }

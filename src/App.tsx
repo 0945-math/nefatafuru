@@ -1,4 +1,4 @@
-// モラバラバ - メインアプリケーション
+// モラバラバ - ネイティブアプリ風メインアプリケーション
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -10,6 +10,7 @@ import {
 } from './gameLogic';
 import { getAIMove, AIMove } from './ai';
 import { soundManager } from './sounds';
+import { hapticManager } from './haptic';
 
 // ============== 定数 ==============
 const BOARD_LINES: [number, number][] = [
@@ -47,6 +48,7 @@ function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [animatingPieces, setAnimatingPieces] = useState<Set<number>>(new Set());
   const [showRules, setShowRules] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const prevBoardRef = useRef<(0 | 1 | 2)[]>(Array(BOARD_SIZE).fill(0));
 
   // Derived values
@@ -70,6 +72,14 @@ function App() {
       soundManager.setEnabled(!prev);
       return !prev;
     });
+  }, []);
+
+  // Splash screen timer
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2000);
+    return () => clearTimeout(timer);
   }, []);
 
   // Effects
@@ -185,8 +195,11 @@ function App() {
     if (gameState.removingPiece) {
       const removable = getRemovablePieces(gameState.board, 2);
       if (removable.includes(pos)) {
+        hapticManager.medium();
         soundManager.playRemove();
         setGameState(prev => removePiece(prev, pos));
+      } else {
+        hapticManager.error();
       }
       return;
     }
@@ -194,34 +207,43 @@ function App() {
     if (gameState.phase === 'placing') {
       const valid = getValidPlacements(gameState.board);
       if (valid.includes(pos)) {
+        hapticManager.light();
         soundManager.playPlace();
         setGameState(prev => {
           const newState = placePiece(prev, pos);
           if (newState.removingPiece) {
+            hapticManager.heavy();
             soundManager.playMill();
           }
           return newState;
         });
+      } else {
+        hapticManager.error();
       }
       return;
     }
 
     if (gameState.phase === 'moving') {
       if (gameState.board[pos] === 1) {
+        hapticManager.light();
         setGameState(prev => selectPiece(prev, pos));
         return;
       }
       if (gameState.selectedPiece !== null && gameState.board[pos] === 0) {
         const targets = getValidTargets(gameState.board, gameState.selectedPiece, 1);
         if (targets.includes(pos)) {
+          hapticManager.light();
           soundManager.playMove();
           setGameState(prev => {
             const newState = movePiece(prev, gameState.selectedPiece!, pos);
             if (newState.removingPiece) {
+              hapticManager.heavy();
               soundManager.playMill();
             }
             return newState;
           });
+        } else {
+          hapticManager.error();
         }
       }
     }
@@ -250,6 +272,21 @@ function App() {
   activeMills.forEach(m => m.mill.forEach(p => millPositions.add(p)));
 
   // Render
+  if (showSplash) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+        <div className="text-center animate-fade-in">
+          <div className="text-8xl mb-6 animate-float">♟️</div>
+          <h1 className="text-5xl font-bold text-white mb-3">モラバラバ</h1>
+          <p className="text-purple-200 text-xl">Morabaraba</p>
+          <div className="mt-8 flex justify-center">
+            <div className="w-12 h-12 border-4 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!gameStarted) {
     return <StartScreen
       playerColor={playerColor}
@@ -268,7 +305,7 @@ function App() {
         <h1 className="text-3xl md:text-4xl font-bold text-white">♟️ モラバラバ</h1>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 px-4 pb-4">
+      <main className="flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 px-4 pb-24">
         <LeftPanel
           gameState={gameState}
           aiThinking={aiThinking}
@@ -309,6 +346,42 @@ function App() {
           onSettings={() => setGameStarted(false)}
         />
       )}
+
+      {/* ネイティブアプリ風ボトムナビゲーション */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-white/10 safe-area-bottom">
+        <div className="flex justify-around items-center h-16 max-w-md mx-auto">
+          <button
+            onClick={() => {
+              hapticManager.light();
+              resetGame();
+            }}
+            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
+          >
+            <span className="text-2xl">🔄</span>
+            <span className="text-xs mt-1">リセット</span>
+          </button>
+          <button
+            onClick={() => {
+              hapticManager.light();
+              toggleSound();
+            }}
+            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
+          >
+            <span className="text-2xl">{soundEnabled ? '🔊' : '🔇'}</span>
+            <span className="text-xs mt-1">サウンド</span>
+          </button>
+          <button
+            onClick={() => {
+              hapticManager.light();
+              setGameStarted(false);
+            }}
+            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
+          >
+            <span className="text-2xl">⚙️</span>
+            <span className="text-xs mt-1">設定</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
@@ -329,7 +402,7 @@ function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, s
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
       <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-white/20">
         <div className="text-center mb-8">
-          <div className="text-7xl mb-4">♟️</div>
+          <div className="text-7xl mb-4 animate-float">♟️</div>
           <h1 className="text-5xl font-bold text-white mb-3">モラバラバ</h1>
           <p className="text-purple-200 text-xl">Morabaraba - AI対戦ボードゲーム</p>
         </div>
@@ -339,7 +412,10 @@ function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, s
             <label className="block text-purple-200 font-medium mb-3 text-sm uppercase tracking-wider">あなたの駒の色</label>
             <div className="flex gap-4 justify-center">
               <button
-                onClick={() => setPlayerColor('dark')}
+                onClick={() => {
+                  hapticManager.light();
+                  setPlayerColor('dark');
+                }}
                 className={`w-24 h-24 rounded-2xl border-4 transition-all duration-300 ${
                   playerColor === 'dark' ? 'border-blue-400 shadow-lg shadow-blue-500/50 scale-110' : 'border-white/20 hover:border-white/40'
                 }`}
@@ -348,7 +424,10 @@ function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, s
                 <span className="text-white text-sm font-bold">黒</span>
               </button>
               <button
-                onClick={() => setPlayerColor('light')}
+                onClick={() => {
+                  hapticManager.light();
+                  setPlayerColor('light');
+                }}
                 className={`w-24 h-24 rounded-2xl border-4 transition-all duration-300 ${
                   playerColor === 'light' ? 'border-amber-400 shadow-lg shadow-amber-500/50 scale-110' : 'border-white/20 hover:border-white/40'
                 }`}
@@ -369,7 +448,10 @@ function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, s
               ] as const).map(d => (
                 <button
                   key={d.key}
-                  onClick={() => setDifficulty(d.key)}
+                  onClick={() => {
+                    hapticManager.light();
+                    setDifficulty(d.key);
+                  }}
                   className={`p-4 rounded-xl transition-all duration-300 ${
                     difficulty === d.key
                       ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg scale-105'
@@ -384,14 +466,20 @@ function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, s
           </div>
 
           <button
-            onClick={() => setShowRules(true)}
+            onClick={() => {
+              hapticManager.light();
+              setShowRules(true);
+            }}
             className="w-full bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-3 px-4 rounded-xl transition-all text-sm border border-white/10"
           >
             📖 ルールを見る
           </button>
 
           <button
-            onClick={onStart}
+            onClick={() => {
+              hapticManager.heavy();
+              onStart();
+            }}
             className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-4 px-8 rounded-xl shadow-xl transition-all hover:scale-[1.02] text-lg"
           >
             🎮 ゲーム開始

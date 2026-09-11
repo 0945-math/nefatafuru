@@ -1,7 +1,7 @@
 {
-  "name": "モラバラバ - AI対戦ボードゲーム",
-  "short_name": "モラバラバ",
-  "description": "アフリカ発祥の戦略ボードゲーム、モラバラバをAIと対戦",
+  "name": "ネファタフル - ヴァイキングチェス",
+  "short_name": "ネファタフル",
+  "description": "ヴァイキング時代の非対称戦略ボードゲーム、ネファタフルをAIと対戦",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

@@ -1,382 +1,340 @@
-// モラバラバ (Morabaraba) - ゲームロジック
+// ネファタフル (Hnefatafl) - ヴァイキングチェス
 
-// ============== 型定義 ==============
-export type Player = 1 | 2;
-export type CellState = 0 | 1 | 2;
-export type Board = CellState[];
-export type Phase = 'placing' | 'moving';
-export type PiecesCount = [number, number]; // [player1, player2]
+export type Player = 'attacker' | 'defender';
+export type CellState = 0 | 'attacker' | 'defender' | 'king';
+export type Board = CellState[][];
 
 export interface GameState {
   board: Board;
   currentPlayer: Player;
-  phase: Phase;
-  piecesToPlace: PiecesCount;
-  piecesOnBoard: PiecesCount;
-  removingPiece: boolean;
   winner: Player | null;
-  selectedPiece: number | null;
+  selectedPiece: { x: number; y: number } | null;
   message: string;
   moveCount: number;
+  capturedAttackers: number;
+  capturedDefenders: number;
 }
 
-// ============== 定数 ==============
-export const BOARD_SIZE = 24;
-export const INITIAL_PIECES = 12;
+export const BOARD_SIZE = 11;
 
-// 隣接リスト
-export const ADJACENCY: number[][] = [
-  [1, 9],        // 0
-  [0, 2, 4],     // 1
-  [1, 14],       // 2
-  [4, 10],       // 3
-  [1, 3, 5, 7],  // 4
-  [4, 13],       // 5
-  [7, 11],       // 6
-  [4, 6, 8],     // 7
-  [7, 12],       // 8
-  [0, 10, 21],   // 9
-  [3, 9, 11, 18],// 10
-  [6, 10, 15],   // 11
-  [8, 13, 17],   // 12
-  [5, 12, 14, 20],// 13
-  [2, 13, 23],   // 14
-  [11, 16],      // 15
-  [15, 17, 19],  // 16
-  [16, 12],      // 17
-  [10, 19],      // 18
-  [16, 18, 20, 22],// 19
-  [19, 13],      // 20
-  [9, 22],       // 21
-  [21, 19, 23],  // 22
-  [22, 14],      // 23
+// 特殊な位置
+export const CORNERS = [
+  { x: 0, y: 0 },
+  { x: 0, y: 10 },
+  { x: 10, y: 0 },
+  { x: 10, y: 10 },
 ];
 
-// ミル（3つ並べ）の定義
-export const MILLS: number[][] = [
-  [0, 1, 2], [2, 14, 23], [21, 22, 23], [0, 9, 21],
-  [3, 4, 5], [5, 13, 20], [18, 19, 20], [3, 10, 18],
-  [6, 7, 8], [8, 12, 17], [15, 16, 17], [6, 11, 15],
-  [1, 4, 7], [16, 19, 22], [9, 10, 11], [12, 13, 14],
+export const CENTER = { x: 5, y: 5 };
+
+// 攻撃側の初期配置（24駒）
+const ATTACKER_POSITIONS = [
+  // 上辺
+  { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }, { x: 6, y: 0 }, { x: 7, y: 0 },
+  // 下辺
+  { x: 3, y: 10 }, { x: 4, y: 10 }, { x: 5, y: 10 }, { x: 6, y: 10 }, { x: 7, y: 10 },
+  // 左辺
+  { x: 0, y: 3 }, { x: 0, y: 4 }, { x: 0, y: 5 }, { x: 0, y: 6 }, { x: 0, y: 7 },
+  // 右辺
+  { x: 10, y: 3 }, { x: 10, y: 4 }, { x: 10, y: 5 }, { x: 10, y: 6 }, { x: 10, y: 7 },
 ];
 
-// 視覚座標（グリッド 0-6）
-export const POS_COORDS: { x: number; y: number }[] = [
-  { x: 0, y: 0 }, { x: 3, y: 0 }, { x: 6, y: 0 },
-  { x: 1, y: 1 }, { x: 3, y: 1 }, { x: 5, y: 1 },
-  { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
-  { x: 0, y: 3 }, { x: 1, y: 3 }, { x: 2, y: 3 },
-  { x: 4, y: 3 }, { x: 5, y: 3 }, { x: 6, y: 3 },
-  { x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 },
-  { x: 1, y: 5 }, { x: 3, y: 5 }, { x: 5, y: 5 },
-  { x: 0, y: 6 }, { x: 3, y: 6 }, { x: 6, y: 6 },
+// 防御側の初期配置（12駒 + 王）
+const DEFENDER_POSITIONS = [
+  // 王の周囲
+  { x: 5, y: 3 }, { x: 5, y: 7 },
+  { x: 3, y: 5 }, { x: 7, y: 5 },
+  // 王の周囲の周囲
+  { x: 4, y: 4 }, { x: 6, y: 4 },
+  { x: 4, y: 6 }, { x: 6, y: 6 },
+  { x: 4, y: 5 }, { x: 6, y: 5 },
+  { x: 5, y: 4 }, { x: 5, y: 6 },
 ];
 
-// ============== ヘルパー関数 ==============
-export const getPlayerIndex = (player: Player): number => player - 1;
-export const getOpponent = (player: Player): Player => player === 1 ? 2 : 1;
-
-// ============== 初期状態 ==============
 export function createInitialState(): GameState {
+  const board: Board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
+  
+  // 攻撃側の駒を配置
+  for (const pos of ATTACKER_POSITIONS) {
+    board[pos.y][pos.x] = 'attacker';
+  }
+  
+  // 防御側の駒を配置
+  for (const pos of DEFENDER_POSITIONS) {
+    board[pos.y][pos.x] = 'defender';
+  }
+  
+  // 王を中央に配置
+  board[5][5] = 'king';
+  
   return {
-    board: Array(BOARD_SIZE).fill(0) as Board,
-    currentPlayer: 1,
-    phase: 'placing',
-    piecesToPlace: [INITIAL_PIECES, INITIAL_PIECES],
-    piecesOnBoard: [0, 0],
-    removingPiece: false,
+    board,
+    currentPlayer: 'attacker',
     winner: null,
     selectedPiece: null,
-    message: 'あなたの番です - 駒を配置してください',
+    message: '攻撃側の番です',
     moveCount: 0,
+    capturedAttackers: 0,
+    capturedDefenders: 0,
   };
 }
 
-// ============== 判定関数 ==============
-export function isInMill(board: Board, pos: number): boolean {
-  const player = board[pos];
-  if (player === 0) return false;
-  return MILLS.some(mill =>
-    mill.includes(pos) && mill.every(p => board[p] === player)
-  );
+export function isValidPosition(x: number, y: number): boolean {
+  return x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE;
 }
 
-export function canRemovePiece(board: Board, pos: number, opponent: Player): boolean {
-  if (board[pos] !== opponent) return false;
-  if (!isInMill(board, pos)) return true;
+export function isCorner(x: number, y: number): boolean {
+  return CORNERS.some(c => c.x === x && c.y === y);
+}
+
+export function isCenter(x: number, y: number): boolean {
+  return x === CENTER.x && y === CENTER.y;
+}
+
+export function isThrone(x: number, y: number): boolean {
+  return isCenter(x, y);
+}
+
+// 駒が移動可能かチェック
+export function canMoveTo(state: GameState, fromX: number, fromY: number, toX: number, toY: number): boolean {
+  // 盤外は不可
+  if (!isValidPosition(toX, toY)) return false;
   
-  // 全ての相手の駒がミルに含まれている場合のみ、ミルの駒を取れる
-  for (let i = 0; i < BOARD_SIZE; i++) {
-    if (board[i] === opponent && !isInMill(board, i)) {
-      return false;
+  // 移動先が空でなければならない
+  if (state.board[toY][toX] !== 0) return false;
+  
+  // 特殊な位置（王座、四隅）には王しか入れない
+  if (isThrone(toX, toY) || isCorner(toX, toY)) {
+    const piece = state.board[fromY][fromX];
+    if (piece !== 'king') return false;
+  }
+  
+  // 縦または横の移動のみ
+  if (fromX !== toX && fromY !== toY) return false;
+  
+  // 移動経路に駒がないかチェック
+  if (fromX === toX) {
+    // 縦移動
+    const minY = Math.min(fromY, toY);
+    const maxY = Math.max(fromY, toY);
+    for (let y = minY + 1; y < maxY; y++) {
+      if (state.board[y][fromX] !== 0) return false;
+    }
+  } else {
+    // 横移動
+    const minX = Math.min(fromX, toX);
+    const maxX = Math.max(fromX, toX);
+    for (let x = minX + 1; x < maxX; x++) {
+      if (state.board[fromY][x] !== 0) return false;
     }
   }
+  
   return true;
 }
 
-export function isFlying(board: Board, player: Player): boolean {
-  return board.filter(c => c === player).length === 3;
-}
-
-export function hasValidMoves(board: Board, player: Player): boolean {
-  const flying = isFlying(board, player);
+// 有効な移動先を取得
+export function getValidMoves(state: GameState, x: number, y: number): { x: number; y: number }[] {
+  const moves: { x: number; y: number }[] = [];
+  const piece = state.board[y][x];
   
-  for (let from = 0; from < BOARD_SIZE; from++) {
-    if (board[from] !== player) continue;
+  if (piece === 0) return moves;
+  
+  // 上下左右に移動可能
+  const directions = [
+    { dx: 0, dy: -1 }, // 上
+    { dx: 0, dy: 1 },  // 下
+    { dx: -1, dy: 0 }, // 左
+    { dx: 1, dy: 0 },  // 右
+  ];
+  
+  for (const dir of directions) {
+    let nx = x + dir.dx;
+    let ny = y + dir.dy;
     
-    if (flying) {
-      if (board.some(c => c === 0)) return true;
-    } else {
-      if (ADJACENCY[from].some(to => board[to] === 0)) return true;
+    while (isValidPosition(nx, ny)) {
+      if (canMoveTo(state, x, y, nx, ny)) {
+        moves.push({ x: nx, y: ny });
+      } else {
+        break;
+      }
+      nx += dir.dx;
+      ny += dir.dy;
     }
   }
   
+  return moves;
+}
+
+// 駒を捕獲できるかチェック
+export function checkCapture(state: GameState, x: number, y: number, player: Player): { x: number; y: number }[] {
+  const captured: { x: number; y: number }[] = [];
+  const opponent = player === 'attacker' ? 'defender' : 'attacker';
+  
+  // 上下左右をチェック
+  const directions = [
+    { dx: 0, dy: -1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: 1, dy: 0 },
+  ];
+  
+  for (const dir of directions) {
+    const nx = x + dir.dx;
+    const ny = y + dir.dy;
+    
+    if (!isValidPosition(nx, ny)) continue;
+    
+    const target = state.board[ny][nx];
+    
+    // 相手の駒（王を除く）
+    if (target === opponent || (opponent === 'defender' && target === 'defender')) {
+      // 反対側に自分の駒または特殊な位置があるか
+      const oppositeX = nx + dir.dx;
+      const oppositeY = ny + dir.dy;
+      
+      if (isValidPosition(oppositeX, oppositeY)) {
+        const opposite = state.board[oppositeY][oppositeX];
+        
+        // 反対側に自分の駒がある
+        if (opposite === player) {
+          captured.push({ x: nx, y: ny });
+        }
+        
+        // 反対側が特殊な位置（王座または四隅）
+        if (isThrone(oppositeX, oppositeY) || isCorner(oppositeX, oppositeY)) {
+          captured.push({ x: nx, y: ny });
+        }
+      }
+    }
+  }
+  
+  return captured;
+}
+
+// 王を捕獲したかチェック
+export function isKingCaptured(state: GameState): boolean {
+  // 王の位置を探す
+  let kingX = -1, kingY = -1;
+  for (let y = 0; y < BOARD_SIZE; y++) {
+    for (let x = 0; x < BOARD_SIZE; x++) {
+      if (state.board[y][x] === 'king') {
+        kingX = x;
+        kingY = y;
+        break;
+      }
+    }
+    if (kingX !== -1) break;
+  }
+  
+  if (kingX === -1) return false;
+  
+  // 王の周囲4方向をチェック
+  const directions = [
+    { dx: 0, dy: -1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: 1, dy: 0 },
+  ];
+  
+  let surroundedCount = 0;
+  
+  for (const dir of directions) {
+    const nx = kingX + dir.dx;
+    const ny = kingY + dir.dy;
+    
+    if (!isValidPosition(nx, ny)) {
+      // 盤外は敵側として扱う
+      surroundedCount++;
+      continue;
+    }
+    
+    const piece = state.board[ny][nx];
+    
+    // 攻撃側の駒または敵対的な特殊な位置
+    if (piece === 'attacker' || 
+        (isThrone(nx, ny) && piece === 0) ||
+        (isCorner(nx, ny) && piece === 0)) {
+      surroundedCount++;
+    }
+  }
+  
+  // 4方向すべてが囲まれている
+  return surroundedCount === 4;
+}
+
+// 王が脱出したかチェック
+export function hasKingEscaped(state: GameState): boolean {
+  for (const corner of CORNERS) {
+    if (state.board[corner.y][corner.x] === 'king') {
+      return true;
+    }
+  }
   return false;
 }
 
-// ============== 有効手取得関数 ==============
-export function getValidPlacements(board: Board): number[] {
-  return board
-    .map((cell, index) => cell === 0 ? index : -1)
-    .filter(index => index >= 0);
-}
-
-export function getValidTargets(board: Board, from: number, player: Player): number[] {
-  if (isFlying(board, player)) {
-    return board
-      .map((cell, index) => cell === 0 && index !== from ? index : -1)
-      .filter(index => index >= 0);
-  }
-  return ADJACENCY[from].filter(to => board[to] === 0);
-}
-
-export function getRemovablePieces(board: Board, opponent: Player): number[] {
-  return board
-    .map((cell, index) => cell === opponent && canRemovePiece(board, index, opponent) ? index : -1)
-    .filter(index => index >= 0);
-}
-
-// ============== 内部ヘルパー ==============
-function formsMill(board: Board, pos: number, player: Player): boolean {
-  return MILLS.some(mill =>
-    mill.includes(pos) && mill.every(p => board[p] === player)
-  );
-}
-
-function createNewBoard(board: Board): Board {
-  return [...board] as Board;
-}
-
-function checkMillAndHandleRemoval(
-  state: GameState,
-  newBoard: Board,
-  pos: number
-): GameState {
-  if (!formsMill(newBoard, pos, state.currentPlayer)) {
-    return advanceTurn(state);
-  }
-
-  const opponent = getOpponent(state.currentPlayer);
-  const removable = getRemovablePieces(newBoard, opponent);
+// 駒を移動
+export function movePiece(state: GameState, fromX: number, fromY: number, toX: number, toY: number): GameState {
+  if (!canMoveTo(state, fromX, fromY, toX, toY)) return state;
   
-  if (removable.length === 0) {
-    return advanceTurn(state);
-  }
-
-  const message = state.currentPlayer === 1
-    ? '🎯 ミル成立！相手の駒を1つ選んで取ってください'
-    : 'AIが駒を取ります...';
-
-  return {
-    ...state,
-    board: newBoard,
-    removingPiece: true,
-    message,
-  };
-}
-
-// ============== ゲームアクション ==============
-export function placePiece(state: GameState, pos: number): GameState {
-  if (state.board[pos] !== 0 || state.phase !== 'placing' || state.winner) {
-    return state;
-  }
-
-  const playerIdx = getPlayerIndex(state.currentPlayer);
-  const newBoard = createNewBoard(state.board);
-  newBoard[pos] = state.currentPlayer;
-
-  const newPiecesToPlace: PiecesCount = [...state.piecesToPlace];
-  const newPiecesOnBoard: PiecesCount = [...state.piecesOnBoard];
-  newPiecesToPlace[playerIdx]--;
-  newPiecesOnBoard[playerIdx]++;
-
-  const newState: GameState = {
-    ...state,
-    board: newBoard,
-    piecesToPlace: newPiecesToPlace,
-    piecesOnBoard: newPiecesOnBoard,
-    moveCount: state.moveCount + 1,
-  };
-
-  return checkMillAndHandleRemoval(newState, newBoard, pos);
-}
-
-export function removePiece(state: GameState, pos: number): GameState {
-  if (!state.removingPiece || state.winner) return state;
-
-  const opponent = getOpponent(state.currentPlayer);
-  if (!canRemovePiece(state.board, pos, opponent)) return state;
-
-  const newBoard = createNewBoard(state.board);
-  newBoard[pos] = 0;
-
-  const opponentIdx = getPlayerIndex(opponent);
-  const newPiecesOnBoard: PiecesCount = [...state.piecesOnBoard];
-  newPiecesOnBoard[opponentIdx]--;
-
-  return advanceTurn({
-    ...state,
-    board: newBoard,
-    piecesOnBoard: newPiecesOnBoard,
-    removingPiece: false,
-  });
-}
-
-export function selectPiece(state: GameState, pos: number): GameState {
-  if (state.phase !== 'moving' || state.winner || state.removingPiece) return state;
-  if (state.board[pos] !== state.currentPlayer) return state;
-
-  const targets = getValidTargets(state.board, pos, state.currentPlayer);
-  if (targets.length === 0) {
-    return { ...state, message: 'この駒は動かせません' };
-  }
-
-  const message = isFlying(state.board, state.currentPlayer)
-    ? '🦅 フライトモード - 移動先を選択'
-    : '移動先を選択してください';
-
-  return {
-    ...state,
-    selectedPiece: pos,
-    message,
-  };
-}
-
-export function movePiece(state: GameState, from: number, to: number): GameState {
-  if (state.phase !== 'moving' || state.winner || state.removingPiece) return state;
-  if (state.board[from] !== state.currentPlayer) return state;
-  if (state.board[to] !== 0) return state;
-
-  const flying = isFlying(state.board, state.currentPlayer);
-  if (!flying && !ADJACENCY[from].includes(to)) return state;
-
-  const newBoard = createNewBoard(state.board);
-  newBoard[from] = 0;
-  newBoard[to] = state.currentPlayer;
-
-  const newState: GameState = {
+  const newBoard = state.board.map(row => [...row]);
+  const piece = newBoard[fromY][fromX];
+  
+  newBoard[fromY][fromX] = 0;
+  newBoard[toY][toX] = piece;
+  
+  let newState: GameState = {
     ...state,
     board: newBoard,
     selectedPiece: null,
     moveCount: state.moveCount + 1,
   };
-
-  return checkMillAndHandleRemoval(newState, newBoard, to);
-}
-
-// ============== ターン進行 ==============
-function advanceTurn(state: GameState): GameState {
-  const nextPlayer = getOpponent(state.currentPlayer);
-  const nextPlayerIdx = getPlayerIndex(nextPlayer);
-
-  // 勝利判定
-  const nextTotal = state.piecesToPlace[nextPlayerIdx] + state.piecesOnBoard[nextPlayerIdx];
-  if (nextTotal < 3) {
-    const message = state.currentPlayer === 1
-      ? '🎉 あなたの勝利です！'
-      : '😔 AIの勝利...';
-
-    return {
-      ...state,
-      currentPlayer: nextPlayer,
-      winner: state.currentPlayer,
-      message,
-    };
-  }
-
-  // 移動フェーズへの移行
-  if (state.piecesToPlace[0] === 0 && state.piecesToPlace[1] === 0 && state.phase === 'placing') {
-    const canMove = hasValidMoves(state.board, nextPlayer);
-    
-    if (!canMove) {
-      const message = state.currentPlayer === 1
-        ? '🎉 相手が動けません！あなたの勝利！'
-        : '😔 AIの勝利...';
-
-      return {
-        ...state,
-        currentPlayer: nextPlayer,
-        phase: 'moving',
-        winner: state.currentPlayer,
-        message,
-      };
+  
+  // 捕獲チェック
+  const player = state.currentPlayer;
+  const captured = checkCapture(newState, toX, toY, player);
+  
+  let capturedAttackers = state.capturedAttackers;
+  let capturedDefenders = state.capturedDefenders;
+  
+  for (const pos of captured) {
+    const capturedPiece = newBoard[pos.y][pos.x];
+    if (capturedPiece === 'attacker') {
+      capturedAttackers++;
+    } else if (capturedPiece === 'defender') {
+      capturedDefenders++;
     }
-
-    const flying = isFlying(state.board, nextPlayer);
-    const message = nextPlayer === 1
-      ? (flying ? '🦅 移動フェーズ開始！フライトモード' : '🔄 移動フェーズ開始！')
-      : 'AIの番です...';
-
+    newBoard[pos.y][pos.x] = 0;
+  }
+  
+  newState = {
+    ...newState,
+    board: newBoard,
+    capturedAttackers,
+    capturedDefenders,
+  };
+  
+  // 勝利条件チェック
+  if (player === 'attacker' && isKingCaptured(newState)) {
     return {
-      ...state,
-      currentPlayer: nextPlayer,
-      phase: 'moving',
-      selectedPiece: null,
-      message,
+      ...newState,
+      winner: 'attacker',
+      message: '🏆 攻撃側の勝利！王を捕獲しました！',
     };
   }
-
-  // 配置フェーズ中
-  if (state.phase === 'placing') {
-    const activePlayer = state.piecesToPlace[nextPlayerIdx] > 0 ? nextPlayer : state.currentPlayer;
-    const message = activePlayer === 1
-      ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
-      : 'AIの番です...';
-
+  
+  if (player === 'defender' && hasKingEscaped(newState)) {
     return {
-      ...state,
-      currentPlayer: activePlayer,
-      selectedPiece: null,
-      message,
+      ...newState,
+      winner: 'defender',
+      message: '🏆 防御側の勝利！王が脱出しました！',
     };
   }
-
-  // 移動フェーズ中
-  const canMove = hasValidMoves(state.board, nextPlayer);
-  if (!canMove) {
-    const message = state.currentPlayer === 1
-      ? '🎉 相手が動けません！あなたの勝利！'
-      : '😔 AIの勝利...';
-
-    return {
-      ...state,
-      currentPlayer: nextPlayer,
-      phase: 'moving',
-      winner: state.currentPlayer,
-      message,
-    };
-  }
-
-  const flying = isFlying(state.board, nextPlayer);
-  const message = nextPlayer === 1
-    ? (flying ? '🦅 あなたの番 - フライトモード！' : '🔄 あなたの番 - 駒を移動してください')
-    : 'AIの番です...';
-
+  
+  // ターン切り替え
+  const nextPlayer = player === 'attacker' ? 'defender' : 'attacker';
   return {
-    ...state,
+    ...newState,
     currentPlayer: nextPlayer,
-    phase: 'moving',
-    selectedPiece: null,
-    message,
+    message: nextPlayer === 'attacker' ? '攻撃側の番です' : '防御側の番です',
   };
 }

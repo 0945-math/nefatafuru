@@ -1,70 +1,39 @@
-// モラバラバ - ネイティブアプリ風メインアプリケーション
-
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   GameState, createInitialState, Player,
-  POS_COORDS, MILLS, BOARD_SIZE,
-  placePiece, removePiece, selectPiece, movePiece,
-  getValidPlacements, getValidTargets, getRemovablePieces,
-  isFlying,
+  BOARD_SIZE, CORNERS, CENTER,
+  isValidPosition, isCorner, isThrone,
+  canMoveTo, getValidMoves, movePiece,
 } from './gameLogic';
 import { getAIMove, AIMove } from './ai';
 import { soundManager } from './sounds';
 import { hapticManager } from './haptic';
 
-// ============== 定数 ==============
-const BOARD_LINES: [number, number][] = [
-  [0, 1], [1, 2], [2, 14], [14, 23], [23, 22], [22, 21], [21, 9], [9, 0],
-  [3, 4], [4, 5], [5, 13], [13, 20], [20, 19], [19, 18], [18, 10], [10, 3],
-  [6, 7], [7, 8], [8, 12], [12, 17], [17, 16], [16, 15], [15, 11], [11, 6],
-  [1, 4], [4, 7], [9, 10], [10, 11], [12, 13], [13, 14], [16, 19], [19, 22],
-];
+const CELL_SIZE = 44;
+const SVG_SIZE = CELL_SIZE * BOARD_SIZE + 40;
+const OFFSET = 20;
 
-const SVG_SIZE = 500;
-const PADDING = 50;
-const SCALE = (SVG_SIZE - PADDING * 2) / 6;
+function toSvgX(gridX: number): number { return OFFSET + gridX * CELL_SIZE + CELL_SIZE / 2; }
+function toSvgY(gridY: number): number { return OFFSET + gridY * CELL_SIZE + CELL_SIZE / 2; }
 
-// ============== ヘルパー関数 ==============
-function toSvgX(gridX: number): number { return PADDING + gridX * SCALE; }
-function toSvgY(gridY: number): number { return PADDING + gridY * SCALE; }
-
-function getActiveMills(board: (0 | 1 | 2)[]): { mill: number[]; player: Player }[] {
-  const result: { mill: number[]; player: Player }[] = [];
-  for (const mill of MILLS) {
-    if (mill.every(p => board[p] === 1)) result.push({ mill, player: 1 });
-    if (mill.every(p => board[p] === 2)) result.push({ mill, player: 2 });
-  }
-  return result;
-}
-
-// ============== メインコンポーネント ==============
 function App() {
-  // State
   const [gameState, setGameState] = useState<GameState>(createInitialState());
   const [aiThinking, setAiThinking] = useState(false);
   const [difficulty, setDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal');
   const [gameStarted, setGameStarted] = useState(false);
-  const [playerColor, setPlayerColor] = useState<'dark' | 'light'>('dark');
+  const [playerSide, setPlayerSide] = useState<'attacker' | 'defender'>('defender');
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [animatingPieces, setAnimatingPieces] = useState<Set<number>>(new Set());
+  const [animatingCells, setAnimatingCells] = useState<Set<string>>(new Set());
   const [showRules, setShowRules] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
-  const prevBoardRef = useRef<(0 | 1 | 2)[]>(Array(BOARD_SIZE).fill(0));
+  const prevBoardRef = useRef<string>(JSON.stringify(createInitialState().board));
 
-  // Derived values
-  const activeMills = getActiveMills(gameState.board);
-  const playerFill = playerColor === 'dark' ? '#1e293b' : '#fef3c7';
-  const aiFill = playerColor === 'dark' ? '#fef3c7' : '#1e293b';
-  const playerStroke = playerColor === 'dark' ? '#60a5fa' : '#f59e0b';
-  const aiStroke = playerColor === 'dark' ? '#f59e0b' : '#60a5fa';
-
-  // Callbacks
   const resetGame = useCallback(() => {
     setGameState(createInitialState());
     setAiThinking(false);
     setGameStarted(true);
-    setAnimatingPieces(new Set());
-    prevBoardRef.current = Array(BOARD_SIZE).fill(0);
+    setAnimatingCells(new Set());
+    prevBoardRef.current = JSON.stringify(createInitialState().board);
   }, []);
 
   const toggleSound = useCallback(() => {
@@ -74,52 +43,38 @@ function App() {
     });
   }, []);
 
-  // Splash screen timer
+  // Splash screen
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, 2000);
+    const timer = setTimeout(() => setShowSplash(false), 2000);
     return () => clearTimeout(timer);
   }, []);
 
-  // Effects
+  // Animation tracking
   useEffect(() => {
-    const prev = prevBoardRef.current;
+    const prev = JSON.parse(prevBoardRef.current);
     const curr = gameState.board;
-    const newAnimating = new Set<number>();
+    const newAnimating = new Set<string>();
     
-    for (let i = 0; i < BOARD_SIZE; i++) {
-      if (prev[i] !== curr[i]) {
-        newAnimating.add(i);
+    for (let y = 0; y < BOARD_SIZE; y++) {
+      for (let x = 0; x < BOARD_SIZE; x++) {
+        if (prev[y][x] !== curr[y][x]) {
+          newAnimating.add(`${x},${y}`);
+        }
       }
     }
     
     if (newAnimating.size > 0) {
-      setAnimatingPieces(newAnimating);
-      setTimeout(() => setAnimatingPieces(new Set()), 300);
+      setAnimatingCells(newAnimating);
+      setTimeout(() => setAnimatingCells(new Set()), 300);
     }
     
-    prevBoardRef.current = [...curr];
+    prevBoardRef.current = JSON.stringify(curr);
   }, [gameState.board]);
 
+  // AI move
   useEffect(() => {
-    if (!gameStarted) return;
-    if (gameState.currentPlayer !== 2 || gameState.winner) return;
-
-    if (gameState.removingPiece) {
-      const timer = setTimeout(() => {
-        setGameState(prev => {
-          if (!prev.removingPiece || prev.currentPlayer !== 2) return prev;
-          const removable = getRemovablePieces(prev.board, 1);
-          if (removable.length > 0) {
-            soundManager.playRemove();
-            return removePiece(prev, removable[0]);
-          }
-          return { ...prev, removingPiece: false };
-        });
-      }, 600);
-      return () => clearTimeout(timer);
-    }
+    if (!gameStarted || gameState.winner) return;
+    if (gameState.currentPlayer === playerSide) return;
 
     setAiThinking(true);
     const timer = setTimeout(() => {
@@ -128,157 +83,88 @@ function App() {
       if (!aiMove) {
         setGameState(prev => ({
           ...prev,
-          winner: 1,
-          message: '🎉 AIが動けません！あなたの勝利です！',
+          winner: playerSide,
+          message: `🏆 ${playerSide === 'attacker' ? '攻撃側' : '防御側'}の勝利！`,
         }));
         setAiThinking(false);
         soundManager.playWin();
         return;
       }
 
-      setGameState(prev => {
-        let newState = { ...prev };
-
-        if (newState.phase === 'placing') {
-          soundManager.playPlace();
-          newState = placePiece(newState, aiMove.to);
-        } else {
-          if (aiMove.from !== undefined) {
-            soundManager.playMove();
-            newState = selectPiece(newState, aiMove.from);
-            newState = movePiece(newState, aiMove.from!, aiMove.to);
-          }
-        }
-
-        if (newState.removingPiece && newState.currentPlayer === 2) {
-          soundManager.playMill();
-          const removal = aiMove.removal !== undefined && aiMove.removal >= 0
-            ? aiMove.removal
-            : getRemovablePieces(newState.board, 1)[0];
-          
-          if (removal !== undefined) {
-            setTimeout(() => {
-              soundManager.playRemove();
-              setGameState(p => {
-                if (!p.removingPiece || p.currentPlayer !== 2) return p;
-                return removePiece(p, removal);
-              });
-            }, 700);
-          } else {
-            newState = { ...newState, removingPiece: false };
-          }
-        }
-
-        return newState;
-      });
-
+      soundManager.playMove();
+      setGameState(prev => movePiece(prev, aiMove.fromX, aiMove.fromY, aiMove.toX, aiMove.toY));
       setAiThinking(false);
-    }, 800);
+    }, 700);
 
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.currentPlayer, gameState.winner, gameState.removingPiece, gameStarted, difficulty]);
+  }, [gameState.currentPlayer, gameState.winner, gameStarted, difficulty, playerSide]);
 
+  // Win/lose sounds
   useEffect(() => {
     if (gameState.winner) {
-      if (gameState.winner === 1) {
+      if (gameState.winner === playerSide) {
         soundManager.playWin();
+        hapticManager.success();
       } else {
         soundManager.playLose();
+        hapticManager.error();
       }
     }
-  }, [gameState.winner]);
+  }, [gameState.winner, playerSide]);
 
-  const handlePositionClick = useCallback((pos: number) => {
-    if (!gameStarted || gameState.winner || gameState.currentPlayer !== 1 || aiThinking) return;
+  const handleCellClick = useCallback((x: number, y: number) => {
+    if (!gameStarted || gameState.winner || aiThinking) return;
+    if (gameState.currentPlayer !== playerSide) return;
 
-    if (gameState.removingPiece) {
-      const removable = getRemovablePieces(gameState.board, 2);
-      if (removable.includes(pos)) {
+    const piece = gameState.board[y][x];
+    
+    // Select own piece
+    if ((playerSide === 'attacker' && piece === 'attacker') ||
+        (playerSide === 'defender' && (piece === 'defender' || piece === 'king'))) {
+      hapticManager.light();
+      setGameState(prev => ({ ...prev, selectedPiece: { x, y } }));
+      return;
+    }
+    
+    // Move selected piece
+    if (gameState.selectedPiece) {
+      const { x: fromX, y: fromY } = gameState.selectedPiece;
+      if (canMoveTo(gameState, fromX, fromY, x, y)) {
         hapticManager.medium();
-        soundManager.playRemove();
-        setGameState(prev => removePiece(prev, pos));
-      } else {
-        hapticManager.error();
-      }
-      return;
-    }
-
-    if (gameState.phase === 'placing') {
-      const valid = getValidPlacements(gameState.board);
-      if (valid.includes(pos)) {
-        hapticManager.light();
         soundManager.playPlace();
-        setGameState(prev => {
-          const newState = placePiece(prev, pos);
-          if (newState.removingPiece) {
-            hapticManager.heavy();
-            soundManager.playMill();
-          }
-          return newState;
-        });
+        setGameState(prev => movePiece(prev, fromX, fromY, x, y));
       } else {
         hapticManager.error();
       }
-      return;
     }
+  }, [gameState, aiThinking, gameStarted, playerSide]);
 
-    if (gameState.phase === 'moving') {
-      if (gameState.board[pos] === 1) {
-        hapticManager.light();
-        setGameState(prev => selectPiece(prev, pos));
-        return;
-      }
-      if (gameState.selectedPiece !== null && gameState.board[pos] === 0) {
-        const targets = getValidTargets(gameState.board, gameState.selectedPiece, 1);
-        if (targets.includes(pos)) {
-          hapticManager.light();
-          soundManager.playMove();
-          setGameState(prev => {
-            const newState = movePiece(prev, gameState.selectedPiece!, pos);
-            if (newState.removingPiece) {
-              hapticManager.heavy();
-              soundManager.playMill();
-            }
-            return newState;
-          });
-        } else {
-          hapticManager.error();
-        }
-      }
+  // Valid moves for selected piece
+  const validMoves = gameState.selectedPiece
+    ? getValidMoves(gameState, gameState.selectedPiece.x, gameState.selectedPiece.y)
+    : [];
+  const validMoveSet = new Set(validMoves.map(m => `${m.x},${m.y}`));
+
+  // Count pieces
+  let attackerCount = 0;
+  let defenderCount = 0;
+  let hasKing = false;
+  for (let y = 0; y < BOARD_SIZE; y++) {
+    for (let x = 0; x < BOARD_SIZE; x++) {
+      if (gameState.board[y][x] === 'attacker') attackerCount++;
+      if (gameState.board[y][x] === 'defender') defenderCount++;
+      if (gameState.board[y][x] === 'king') hasKing = true;
     }
-  }, [gameState, aiThinking, gameStarted]);
+  }
 
-  // Computed highlights
-  const getHighlights = () => {
-    const valid = new Set<number>();
-    const removable = new Set<number>();
-
-    if (gameState.currentPlayer !== 1 || aiThinking || gameState.winner) return { valid, removable };
-
-    if (gameState.removingPiece) {
-      getRemovablePieces(gameState.board, 2).forEach(p => removable.add(p));
-    } else if (gameState.phase === 'placing') {
-      getValidPlacements(gameState.board).forEach(p => valid.add(p));
-    } else if (gameState.phase === 'moving' && gameState.selectedPiece !== null) {
-      getValidTargets(gameState.board, gameState.selectedPiece, 1).forEach(p => valid.add(p));
-    }
-
-    return { valid, removable };
-  };
-
-  const { valid: validHighlights, removable: removableHighlights } = getHighlights();
-  const millPositions = new Set<number>();
-  activeMills.forEach(m => m.mill.forEach(p => millPositions.add(p)));
-
-  // Render
   if (showSplash) {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
         <div className="text-center animate-fade-in">
-          <div className="text-8xl mb-6 animate-float">♟️</div>
-          <h1 className="text-5xl font-bold text-white mb-3">モラバラバ</h1>
-          <p className="text-purple-200 text-xl">Morabaraba</p>
+          <div className="text-8xl mb-6 animate-float">⚔️</div>
+          <h1 className="text-5xl font-bold text-white mb-3">ネファタフル</h1>
+          <p className="text-purple-200 text-xl">Hnefatafl - ヴァイキングチェス</p>
           <div className="mt-8 flex justify-center">
             <div className="w-12 h-12 border-4 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
           </div>
@@ -288,665 +174,443 @@ function App() {
   }
 
   if (!gameStarted) {
-    return <StartScreen
-      playerColor={playerColor}
-      setPlayerColor={setPlayerColor}
-      difficulty={difficulty}
-      setDifficulty={setDifficulty}
-      showRules={showRules}
-      setShowRules={setShowRules}
-      onStart={resetGame}
-    />;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-0 left-0 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob" />
+          <div className="absolute bottom-0 right-0 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000" />
+        </div>
+
+        <div className="relative bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-white/20">
+          <div className="text-center mb-8">
+            <div className="text-7xl mb-4 animate-float">⚔️</div>
+            <h1 className="text-5xl font-bold text-white mb-3">ネファタフル</h1>
+            <p className="text-purple-200 text-xl">Hnefatafl - ヴァイキングチェス</p>
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <label className="block text-purple-200 font-medium mb-3 text-sm uppercase tracking-wider">あなたの陣営</label>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => { hapticManager.light(); setPlayerSide('attacker'); }}
+                  className={`p-4 rounded-2xl border-4 transition-all duration-300 ${
+                    playerSide === 'attacker' ? 'border-red-400 shadow-lg shadow-red-500/50 scale-105' : 'border-white/20 hover:border-white/40'
+                  }`}
+                >
+                  <div className="text-3xl mb-2">🗡️</div>
+                  <div className="text-white font-bold">攻撃側</div>
+                  <div className="text-purple-300 text-xs mt-1">24駒 - 王を捕獲</div>
+                </button>
+                <button
+                  onClick={() => { hapticManager.light(); setPlayerSide('defender'); }}
+                  className={`p-4 rounded-2xl border-4 transition-all duration-300 ${
+                    playerSide === 'defender' ? 'border-blue-400 shadow-lg shadow-blue-500/50 scale-105' : 'border-white/20 hover:border-white/40'
+                  }`}
+                >
+                  <div className="text-3xl mb-2">🛡️</div>
+                  <div className="text-white font-bold">防御側</div>
+                  <div className="text-purple-300 text-xs mt-1">12駒+王 - 王を脱出</div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-purple-200 font-medium mb-3 text-sm uppercase tracking-wider">難易度</label>
+              <div className="grid grid-cols-3 gap-3">
+                {([
+                  { key: 'easy', label: '簡単', emoji: '🌱' },
+                  { key: 'normal', label: '普通', emoji: '⚔️' },
+                  { key: 'hard', label: '難しい', emoji: '🔥' },
+                ] as const).map(d => (
+                  <button
+                    key={d.key}
+                    onClick={() => { hapticManager.light(); setDifficulty(d.key); }}
+                    className={`p-4 rounded-xl transition-all duration-300 ${
+                      difficulty === d.key
+                        ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg scale-105'
+                        : 'bg-white/10 text-purple-200 hover:bg-white/20'
+                    }`}
+                  >
+                    <div className="text-3xl mb-2">{d.emoji}</div>
+                    <div className="font-bold">{d.label}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => { hapticManager.light(); setShowRules(true); }}
+              className="w-full bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-3 px-4 rounded-xl transition-all text-sm border border-white/10"
+            >
+              📖 ルールを見る
+            </button>
+
+            <button
+              onClick={() => { hapticManager.heavy(); resetGame(); }}
+              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-4 px-8 rounded-xl shadow-xl transition-all hover:scale-[1.02] text-lg"
+            >
+              ⚔️ ゲーム開始
+            </button>
+          </div>
+        </div>
+
+        {showRules && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-gradient-to-br from-slate-800 to-purple-900 rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/20">
+              <h2 className="text-3xl font-bold text-white mb-6">📖 ネファタフルのルール</h2>
+              <div className="space-y-4 text-purple-200">
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">⚔️ 非対称ゲーム</h3>
+                  <p>攻撃側（24駒）vs 防御側（12駒 + 王）の非対称なゲームです</p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">🗡️ 攻撃側の目的</h3>
+                  <p>中央の王を四方から囲んで捕獲する</p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">🛡️ 防御側の目的</h3>
+                  <p>王を盤の四隅のいずれかに脱出させる</p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">♜ 駒の動き</h3>
+                  <p>すべての駒はチェスのルークのように縦横に何マスでも移動できます（他の駒を飛び越えることはできません）</p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">⚡ 捕獲ルール</h3>
+                  <p>敵の駒を自分の駒ではさむと捕獲できます（王は除く）</p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">👑 王の特別ルール</h3>
+                  <p>王は中央の王座と四隅にのみ入ることができます</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRules(false)}
+                className="w-full mt-6 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold py-3 px-6 rounded-xl"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
-      <header className="text-center py-4 px-4">
-        <h1 className="text-3xl md:text-4xl font-bold text-white">♟️ モラバラバ</h1>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-0 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob" />
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob animation-delay-2000" />
+      </div>
+
+      <header className="relative z-10 text-center py-3 px-4">
+        <h1 className="text-2xl md:text-3xl font-bold text-white">⚔️ ネファタフル</h1>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 px-4 pb-24">
-        <LeftPanel
-          gameState={gameState}
-          aiThinking={aiThinking}
-          difficulty={difficulty}
-          playerFill={playerFill}
-          aiFill={aiFill}
-          playerStroke={playerStroke}
-          aiStroke={aiStroke}
-          activeMills={activeMills}
-          soundEnabled={soundEnabled}
-          onToggleSound={toggleSound}
-          onReset={resetGame}
-          onSettings={() => setGameStarted(false)}
-        />
+      <main className="relative z-10 flex-1 flex flex-col lg:flex-row items-center justify-center gap-4 px-4 pb-24">
+        {/* Left Panel */}
+        <div className="w-full lg:w-72 order-2 lg:order-1">
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4 border border-white/10 space-y-3">
+            {/* Status */}
+            <div className={`text-center py-2 px-3 rounded-xl text-sm font-medium ${
+              gameState.winner
+                ? gameState.winner === playerSide ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'
+                : gameState.currentPlayer === playerSide
+                  ? 'bg-blue-500/20 text-blue-300'
+                  : 'bg-purple-500/20 text-purple-300'
+            }`}>
+              {aiThinking ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="inline-block w-4 h-4 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
+                  AI思考中...
+                </span>
+              ) : gameState.message}
+            </div>
 
-        <GameBoard
-          gameState={gameState}
-          validHighlights={validHighlights}
-          removableHighlights={removableHighlights}
-          millPositions={millPositions}
-          animatingPieces={animatingPieces}
-          playerFill={playerFill}
-          aiFill={aiFill}
-          playerStroke={playerStroke}
-          aiStroke={aiStroke}
-          onPositionClick={handlePositionClick}
-        />
+            {/* Attacker info */}
+            <div className={`p-3 rounded-xl ${
+              gameState.currentPlayer === 'attacker' && !gameState.winner ? 'bg-red-500/20 border border-red-400/50' : 'bg-white/5'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">🗡️</span>
+                <span className="text-white font-bold text-sm">攻撃側 {gameState.currentPlayer === 'attacker' && !gameState.winner ? '(ターン)' : ''}</span>
+              </div>
+              <div className="text-red-300 text-xs">駒数: {attackerCount} / 24</div>
+            </div>
 
-        <RightPanel />
+            {/* Defender info */}
+            <div className={`p-3 rounded-xl ${
+              gameState.currentPlayer === 'defender' && !gameState.winner ? 'bg-blue-500/20 border border-blue-400/50' : 'bg-white/5'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">🛡️</span>
+                <span className="text-white font-bold text-sm">防御側 {gameState.currentPlayer === 'defender' && !gameState.winner ? '(ターン)' : ''}</span>
+              </div>
+              <div className="text-blue-300 text-xs">駒数: {defenderCount} / 12 {hasKing ? '+ 👑' : '(王捕獲!)'}</div>
+            </div>
+
+            {/* Move counter */}
+            <div className="bg-white/5 rounded-lg p-2 text-center border border-white/10">
+              <div className="text-purple-300 text-xs">手数</div>
+              <div className="text-white font-bold text-xl">{gameState.moveCount}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Board */}
+        <div className="order-1 lg:order-2 flex-shrink-0">
+          <div className="bg-gradient-to-br from-amber-900/40 to-amber-950/40 backdrop-blur-xl rounded-3xl p-3 md:p-4 shadow-2xl border border-amber-700/30">
+            <svg
+              viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
+              className="w-[320px] h-[320px] sm:w-[400px] sm:h-[400px] md:w-[480px] md:h-[480px]"
+            >
+              <defs>
+                <radialGradient id="boardGrad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#c8a882" />
+                  <stop offset="100%" stopColor="#8B6914" />
+                </radialGradient>
+                <filter id="shadow">
+                  <feDropShadow dx="0" dy="2" stdDeviation="2" floodOpacity="0.4" />
+                </filter>
+                <filter id="glow">
+                  <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                  <feMerge>
+                    <feMergeNode in="coloredBlur"/>
+                    <feMergeNode in="SourceGraphic"/>
+                  </feMerge>
+                </filter>
+              </defs>
+
+              {/* Board background */}
+              <rect x="5" y="5" width={SVG_SIZE - 10} height={SVG_SIZE - 10} fill="url(#boardGrad)" rx="10" />
+              <rect x="5" y="5" width={SVG_SIZE - 10} height={SVG_SIZE - 10} fill="none" stroke="#5d4037" strokeWidth="3" rx="10" />
+
+              {/* Grid lines */}
+              {Array.from({ length: BOARD_SIZE }).map((_, i) => (
+                <g key={`grid-${i}`}>
+                  <line
+                    x1={toSvgX(0)} y1={toSvgY(i)}
+                    x2={toSvgX(BOARD_SIZE - 1)} y2={toSvgY(i)}
+                    stroke="#5d4037" strokeWidth="1.5" opacity="0.5"
+                  />
+                  <line
+                    x1={toSvgX(i)} y1={toSvgY(0)}
+                    x2={toSvgX(i)} y2={toSvgY(BOARD_SIZE - 1)}
+                    stroke="#5d4037" strokeWidth="1.5" opacity="0.5"
+                  />
+                </g>
+              ))}
+
+              {/* Special positions */}
+              {/* Corners */}
+              {CORNERS.map((c, i) => (
+                <rect
+                  key={`corner-${i}`}
+                  x={toSvgX(c.x) - CELL_SIZE / 2 + 2}
+                  y={toSvgY(c.y) - CELL_SIZE / 2 + 2}
+                  width={CELL_SIZE - 4}
+                  height={CELL_SIZE - 4}
+                  fill="rgba(250, 204, 21, 0.2)"
+                  stroke="rgba(250, 204, 21, 0.5)"
+                  strokeWidth="2"
+                  rx="4"
+                />
+              ))}
+
+              {/* Throne (center) */}
+              <rect
+                x={toSvgX(CENTER.x) - CELL_SIZE / 2 + 2}
+                y={toSvgY(CENTER.y) - CELL_SIZE / 2 + 2}
+                width={CELL_SIZE - 4}
+                height={CELL_SIZE - 4}
+                fill="rgba(168, 85, 247, 0.2)"
+                stroke="rgba(168, 85, 247, 0.5)"
+                strokeWidth="2"
+                rx="4"
+              />
+
+              {/* Valid move highlights */}
+              {Array.from(validMoveSet).map(key => {
+                const [x, y] = key.split(',').map(Number);
+                return (
+                  <rect
+                    key={`valid-${key}`}
+                    x={toSvgX(x) - CELL_SIZE / 2 + 3}
+                    y={toSvgY(y) - CELL_SIZE / 2 + 3}
+                    width={CELL_SIZE - 6}
+                    height={CELL_SIZE - 6}
+                    fill="rgba(34, 197, 94, 0.25)"
+                    stroke="rgba(34, 197, 94, 0.7)"
+                    strokeWidth="2"
+                    rx="4"
+                    className="animate-pulse"
+                  />
+                );
+              })}
+
+              {/* Pieces */}
+              {gameState.board.map((row, y) =>
+                row.map((cell, x) => {
+                  if (cell === 0) return null;
+                  
+                  const cx = toSvgX(x);
+                  const cy = toSvgY(y);
+                  const isSelected = gameState.selectedPiece?.x === x && gameState.selectedPiece?.y === y;
+                  const isAnimating = animatingCells.has(`${x},${y}`);
+                  
+                  let fill = '#888';
+                  let stroke = '#333';
+                  let symbol = '';
+                  
+                  if (cell === 'attacker') {
+                    fill = '#dc2626';
+                    stroke = '#7f1d1d';
+                    symbol = '🗡️';
+                  } else if (cell === 'defender') {
+                    fill = '#2563eb';
+                    stroke = '#1e3a8a';
+                    symbol = '🛡️';
+                  } else if (cell === 'king') {
+                    fill = '#eab308';
+                    stroke = '#854d0e';
+                    symbol = '👑';
+                  }
+                  
+                  return (
+                    <g
+                      key={`piece-${x}-${y}`}
+                      onClick={() => handleCellClick(x, y)}
+                      className="cursor-pointer"
+                    >
+                      {/* Selection highlight */}
+                      {isSelected && (
+                        <circle cx={cx} cy={cy} r={CELL_SIZE / 2 - 2} fill="none" stroke="rgba(96, 165, 250, 0.9)" strokeWidth="3" filter="url(#glow)" />
+                      )}
+                      
+                      {/* Piece shadow */}
+                      <circle cx={cx} cy={cy + 2} r={CELL_SIZE / 2 - 5} fill="rgba(0,0,0,0.3)" />
+                      
+                      {/* Piece */}
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={CELL_SIZE / 2 - 5}
+                        fill={fill}
+                        stroke={isSelected ? '#60a5fa' : stroke}
+                        strokeWidth={isSelected ? 3 : 2}
+                        filter="url(#shadow)"
+                        className={isAnimating ? 'animate-piece-in' : ''}
+                      />
+                      
+                      {/* Symbol */}
+                      <text x={cx} y={cy + 2} textAnchor="middle" dominantBaseline="middle" fontSize="16">
+                        {symbol}
+                      </text>
+                    </g>
+                  );
+                })
+              )}
+
+              {/* Clickable cells overlay */}
+              {gameState.board.map((row, y) =>
+                row.map((_, x) => (
+                  <rect
+                    key={`click-${x}-${y}`}
+                    x={toSvgX(x) - CELL_SIZE / 2}
+                    y={toSvgY(y) - CELL_SIZE / 2}
+                    width={CELL_SIZE}
+                    height={CELL_SIZE}
+                    fill="transparent"
+                    onClick={() => handleCellClick(x, y)}
+                    className="cursor-pointer"
+                  />
+                ))
+              )}
+            </svg>
+          </div>
+        </div>
+
+        {/* Right Panel */}
+        <div className="w-full lg:w-72 order-3">
+          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-4 border border-white/10">
+            <h3 className="text-white font-bold mb-3 text-sm">💡 ヒント</h3>
+            <div className="text-xs text-purple-200 space-y-2">
+              <p>🟢 <strong>緑</strong> = 移動可能な場所</p>
+              <p>🔵 <strong>青い輪</strong> = 選択中の駒</p>
+              <p>🟡 <strong>四隅</strong> = 王の脱出先</p>
+              <p>🟣 <strong>中央</strong> = 王座</p>
+            </div>
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <h4 className="text-purple-200 font-bold mb-2 text-xs">🎯 戦略</h4>
+              <ul className="text-xs text-purple-300 space-y-1">
+                <li>• 攻撃側：王を四方から囲む</li>
+                <li>• 防御側：王を四隅に逃がす</li>
+                <li>• 駒をはさんで捕獲できる</li>
+                <li>• 中央と四隅は特別</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </main>
 
-      {gameState.winner && (
-        <WinnerModal
-          gameState={gameState}
-          difficulty={difficulty}
-          activeMills={activeMills}
-          onPlayAgain={resetGame}
-          onSettings={() => setGameStarted(false)}
-        />
-      )}
-
-      {/* ネイティブアプリ風ボトムナビゲーション */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-white/10 safe-area-bottom">
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-white/10 safe-area-bottom z-40">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          <button
-            onClick={() => {
-              hapticManager.light();
-              resetGame();
-            }}
-            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
-          >
+          <button onClick={() => { hapticManager.light(); resetGame(); }} className="flex flex-col items-center justify-center flex-1 h-full text-purple-300">
             <span className="text-2xl">🔄</span>
             <span className="text-xs mt-1">リセット</span>
           </button>
-          <button
-            onClick={() => {
-              hapticManager.light();
-              toggleSound();
-            }}
-            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
-          >
+          <button onClick={() => { hapticManager.light(); toggleSound(); }} className="flex flex-col items-center justify-center flex-1 h-full text-purple-300">
             <span className="text-2xl">{soundEnabled ? '🔊' : '🔇'}</span>
             <span className="text-xs mt-1">サウンド</span>
           </button>
-          <button
-            onClick={() => {
-              hapticManager.light();
-              setGameStarted(false);
-            }}
-            className="flex flex-col items-center justify-center flex-1 h-full text-purple-300 hover:text-purple-200 transition-colors"
-          >
+          <button onClick={() => { hapticManager.light(); setGameStarted(false); }} className="flex flex-col items-center justify-center flex-1 h-full text-purple-300">
             <span className="text-2xl">⚙️</span>
             <span className="text-xs mt-1">設定</span>
           </button>
         </div>
       </nav>
-    </div>
-  );
-}
 
-// ============== サブコンポーネント ==============
-interface StartScreenProps {
-  playerColor: 'dark' | 'light';
-  setPlayerColor: (color: 'dark' | 'light') => void;
-  difficulty: 'easy' | 'normal' | 'hard';
-  setDifficulty: (d: 'easy' | 'normal' | 'hard') => void;
-  showRules: boolean;
-  setShowRules: (show: boolean) => void;
-  onStart: () => void;
-}
-
-function StartScreen({ playerColor, setPlayerColor, difficulty, setDifficulty, showRules, setShowRules, onStart }: StartScreenProps) {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-      <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-white/20">
-        <div className="text-center mb-8">
-          <div className="text-7xl mb-4 animate-float">♟️</div>
-          <h1 className="text-5xl font-bold text-white mb-3">モラバラバ</h1>
-          <p className="text-purple-200 text-xl">Morabaraba - AI対戦ボードゲーム</p>
-        </div>
-
-        <div className="space-y-6">
-          <div>
-            <label className="block text-purple-200 font-medium mb-3 text-sm uppercase tracking-wider">あなたの駒の色</label>
-            <div className="flex gap-4 justify-center">
-              <button
-                onClick={() => {
-                  hapticManager.light();
-                  setPlayerColor('dark');
-                }}
-                className={`w-24 h-24 rounded-2xl border-4 transition-all duration-300 ${
-                  playerColor === 'dark' ? 'border-blue-400 shadow-lg shadow-blue-500/50 scale-110' : 'border-white/20 hover:border-white/40'
-                }`}
-                style={{ backgroundColor: '#1e293b' }}
-              >
-                <span className="text-white text-sm font-bold">黒</span>
+      {/* Winner Modal */}
+      {gameState.winner && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-br from-slate-800 to-purple-900 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl border border-white/20">
+            <div className="text-8xl mb-4">
+              {gameState.winner === playerSide ? '🏆' : '💀'}
+            </div>
+            <h2 className="text-4xl font-bold text-white mb-3">
+              {gameState.winner === playerSide ? '勝利！' : '敗北...'}
+            </h2>
+            <p className="text-purple-200 text-lg mb-6">
+              {gameState.winner === 'attacker'
+                ? '攻撃側が王を捕獲しました！'
+                : '防御側の王が脱出しました！'}
+            </p>
+            <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-purple-500/10 rounded-lg p-2">
+                  <div className="text-purple-300 text-xs">総手数</div>
+                  <div className="text-white font-bold text-lg">{gameState.moveCount}</div>
+                </div>
+                <div className="bg-amber-500/10 rounded-lg p-2">
+                  <div className="text-amber-300 text-xs">難易度</div>
+                  <div className="text-white font-bold text-lg">{difficulty === 'easy' ? '簡単' : difficulty === 'normal' ? '普通' : '難しい'}</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-center">
+              <button onClick={resetGame} className="bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold py-3 px-6 rounded-xl hover:scale-105 transition-all">
+                🔄 もう一度
               </button>
-              <button
-                onClick={() => {
-                  hapticManager.light();
-                  setPlayerColor('light');
-                }}
-                className={`w-24 h-24 rounded-2xl border-4 transition-all duration-300 ${
-                  playerColor === 'light' ? 'border-amber-400 shadow-lg shadow-amber-500/50 scale-110' : 'border-white/20 hover:border-white/40'
-                }`}
-                style={{ backgroundColor: '#fef3c7' }}
-              >
-                <span className="text-gray-800 text-sm font-bold">白</span>
+              <button onClick={() => setGameStarted(false)} className="bg-white/10 text-purple-200 font-medium py-3 px-6 rounded-xl border border-white/10">
+                ⚙️ 設定
               </button>
             </div>
           </div>
-
-          <div>
-            <label className="block text-purple-200 font-medium mb-3 text-sm uppercase tracking-wider">難易度</label>
-            <div className="grid grid-cols-3 gap-3">
-              {([
-                { key: 'easy', label: '簡単', emoji: '🌱' },
-                { key: 'normal', label: '普通', emoji: '⚔️' },
-                { key: 'hard', label: '難しい', emoji: '🔥' },
-              ] as const).map(d => (
-                <button
-                  key={d.key}
-                  onClick={() => {
-                    hapticManager.light();
-                    setDifficulty(d.key);
-                  }}
-                  className={`p-4 rounded-xl transition-all duration-300 ${
-                    difficulty === d.key
-                      ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg scale-105'
-                      : 'bg-white/10 text-purple-200 hover:bg-white/20'
-                  }`}
-                >
-                  <div className="text-3xl mb-2">{d.emoji}</div>
-                  <div className="font-bold">{d.label}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={() => {
-              hapticManager.light();
-              setShowRules(true);
-            }}
-            className="w-full bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-3 px-4 rounded-xl transition-all text-sm border border-white/10"
-          >
-            📖 ルールを見る
-          </button>
-
-          <button
-            onClick={() => {
-              hapticManager.heavy();
-              onStart();
-            }}
-            className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-4 px-8 rounded-xl shadow-xl transition-all hover:scale-[1.02] text-lg"
-          >
-            🎮 ゲーム開始
-          </button>
         </div>
-      </div>
-
-      {showRules && (
-        <RulesModal onClose={() => setShowRules(false)} />
       )}
-    </div>
-  );
-}
-
-function RulesModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gradient-to-br from-slate-800 to-purple-900 rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/20">
-        <h2 className="text-3xl font-bold text-white mb-6">📖 モラバラバのルール</h2>
-        
-        <div className="space-y-4 text-purple-200">
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">🎯 ゲームの目的</h3>
-            <p>相手の駒を2個以下にする、または相手が動けなくする</p>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">📍 配置フェーズ</h3>
-            <p>各プレイヤー12個の駒を交互に空いている交点に配置します</p>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">🔄 移動フェーズ</h3>
-            <p>駒を隣接する空いている点に移動します</p>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">🦅 フライトフェーズ</h3>
-            <p>駒が3個になったら、どこにでも移動できるようになります</p>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">✨ ミル（3つ並べ）</h3>
-            <p>直線上に3つ並べると「ミル」成立！相手の駒を1つ取ることができます</p>
-            <p className="text-sm mt-2 text-purple-300">※ミルを構成している駒は取れませんが、全ての駒がミルの場合は取れます</p>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-bold text-white mb-2">💡 戦略のコツ</h3>
-            <ul className="list-disc list-inside space-y-1 text-sm">
-              <li>中央の交点は価値が高い</li>
-              <li>2つ並べたら3つ目を狙う</li>
-              <li>相手のミルを阻止しよう</li>
-              <li>複数のミルを同時に狙うと強力</li>
-            </ul>
-          </div>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full mt-6 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-3 px-6 rounded-xl transition-all"
-        >
-          閉じる
-        </button>
-      </div>
-    </div>
-  );
-}
-
-interface LeftPanelProps {
-  gameState: GameState;
-  aiThinking: boolean;
-  difficulty: 'easy' | 'normal' | 'hard';
-  playerFill: string;
-  aiFill: string;
-  playerStroke: string;
-  aiStroke: string;
-  activeMills: { mill: number[]; player: Player }[];
-  soundEnabled: boolean;
-  onToggleSound: () => void;
-  onReset: () => void;
-  onSettings: () => void;
-}
-
-function LeftPanel({
-  gameState, aiThinking, difficulty,
-  playerFill, aiFill, playerStroke, aiStroke,
-  activeMills, soundEnabled,
-  onToggleSound, onReset, onSettings
-}: LeftPanelProps) {
-  return (
-    <div className="w-full lg:w-80 order-2 lg:order-1">
-      <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 border border-white/10 space-y-4">
-        <StatusMessage gameState={gameState} aiThinking={aiThinking} />
-        
-        <PlayerCard
-          player={1}
-          gameState={gameState}
-          fill={playerFill}
-          stroke={playerStroke}
-          millsCount={activeMills.filter(m => m.player === 1).length}
-        />
-        
-        <PlayerCard
-          player={2}
-          gameState={gameState}
-          fill={aiFill}
-          stroke={aiStroke}
-          millsCount={activeMills.filter(m => m.player === 2).length}
-          difficulty={difficulty}
-        />
-
-        <PhaseIndicator gameState={gameState} />
-        
-        <div className="bg-white/5 rounded-lg p-3 text-center border border-white/10">
-          <div className="text-purple-300 text-xs">手数</div>
-          <div className="text-white font-bold text-2xl">{gameState.moveCount}</div>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={onToggleSound}
-            className="flex-1 bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-2 px-3 rounded-lg transition-all text-sm border border-white/10"
-          >
-            {soundEnabled ? '🔊' : '🔇'}
-          </button>
-          <button
-            onClick={onReset}
-            className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-medium py-2 px-3 rounded-lg transition-all text-sm"
-          >
-            🔄 リセット
-          </button>
-          <button
-            onClick={onSettings}
-            className="flex-1 bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-2 px-3 rounded-lg transition-all text-sm border border-white/10"
-          >
-            ⚙️ 設定
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatusMessage({ gameState, aiThinking }: { gameState: GameState; aiThinking: boolean }) {
-  const bgColor = gameState.winner
-    ? gameState.winner === 1 ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'
-    : gameState.removingPiece
-      ? 'bg-amber-500/20 text-amber-300'
-      : gameState.currentPlayer === 1
-        ? 'bg-blue-500/20 text-blue-300'
-        : 'bg-purple-500/20 text-purple-300';
-
-  return (
-    <div className={`text-center py-3 px-4 rounded-xl ${bgColor}`}>
-      <div className="text-sm font-medium">
-        {aiThinking ? (
-          <span className="flex items-center justify-center gap-2">
-            <span className="inline-block w-4 h-4 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
-            AI思考中...
-          </span>
-        ) : gameState.message}
-      </div>
-    </div>
-  );
-}
-
-interface PlayerCardProps {
-  player: Player;
-  gameState: GameState;
-  fill: string;
-  stroke: string;
-  millsCount: number;
-  difficulty?: 'easy' | 'normal' | 'hard';
-}
-
-function PlayerCard({ player, gameState, fill, stroke, millsCount, difficulty }: PlayerCardProps) {
-  const playerIdx = player - 1;
-  const isActive = gameState.currentPlayer === player && !gameState.winner;
-  const isAI = player === 2;
-
-  return (
-    <div className={`p-4 rounded-xl transition-all ${
-      isActive ? 'bg-blue-500/20 border-2 border-blue-400/50' : 'bg-white/5 border-2 border-transparent'
-    }`}>
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 rounded-full shadow-lg" style={{ backgroundColor: fill, border: `3px solid ${stroke}` }} />
-        <div>
-          <div className="text-white font-bold">{isAI ? 'AI 🤖' : 'あなた'}</div>
-          <div className="text-purple-300 text-xs">
-            {isAI
-              ? (difficulty === 'easy' ? '簡単' : difficulty === 'normal' ? '普通' : '難しい')
-              : (gameState.phase === 'placing' ? `配置残り: ${gameState.piecesToPlace[playerIdx]}個` : '移動フェーズ')
-            }
-          </div>
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <div className="flex-1 bg-white/10 rounded-lg p-2 text-center">
-          <div className="text-white font-bold text-lg">{gameState.piecesOnBoard[playerIdx]}</div>
-          <div className="text-purple-300 text-xs">盤上</div>
-        </div>
-        <div className="flex-1 bg-white/10 rounded-lg p-2 text-center">
-          <div className="text-white font-bold text-lg">{gameState.piecesToPlace[playerIdx]}</div>
-          <div className="text-purple-300 text-xs">残り</div>
-        </div>
-        <div className="flex-1 bg-white/10 rounded-lg p-2 text-center">
-          <div className="text-white font-bold text-lg">{millsCount}</div>
-          <div className="text-purple-300 text-xs">ミル</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PhaseIndicator({ gameState }: { gameState: GameState }) {
-  const phaseText = gameState.phase === 'placing' ? '📍 配置フェーズ' :
-    gameState.removingPiece ? '🎯 駒を取る' :
-    isFlying(gameState.board, gameState.currentPlayer) ? '🦅 フライト' :
-    '🔄 移動フェーズ';
-
-  const bgColor = gameState.phase === 'placing' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-sky-500/20 text-sky-300';
-
-  return (
-    <div className="flex items-center justify-center gap-2 py-2">
-      <div className={`px-4 py-2 rounded-full text-sm font-bold ${bgColor}`}>
-        {phaseText}
-      </div>
-    </div>
-  );
-}
-
-interface GameBoardProps {
-  gameState: GameState;
-  validHighlights: Set<number>;
-  removableHighlights: Set<number>;
-  millPositions: Set<number>;
-  animatingPieces: Set<number>;
-  playerFill: string;
-  aiFill: string;
-  playerStroke: string;
-  aiStroke: string;
-  onPositionClick: (pos: number) => void;
-}
-
-function GameBoard({
-  gameState, validHighlights, removableHighlights, millPositions, animatingPieces,
-  playerFill, aiFill, playerStroke, aiStroke, onPositionClick
-}: GameBoardProps) {
-  return (
-    <div className="order-1 lg:order-2 flex-shrink-0">
-      <div className="bg-gradient-to-br from-amber-800/40 to-amber-900/40 backdrop-blur-xl rounded-3xl p-4 md:p-6 shadow-2xl border border-amber-600/20">
-        <svg
-          viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
-          className="w-[320px] h-[320px] sm:w-[400px] sm:h-[400px] md:w-[480px] md:h-[480px]"
-        >
-          <defs>
-            <radialGradient id="boardGrad" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#d4a574" />
-              <stop offset="100%" stopColor="#8B6914" />
-            </radialGradient>
-            <filter id="shadow">
-              <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.3" />
-            </filter>
-            <filter id="glow">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-              <feMerge>
-                <feMergeNode in="coloredBlur"/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
-          </defs>
-
-          <rect x="10" y="10" width={SVG_SIZE - 20} height={SVG_SIZE - 20} fill="url(#boardGrad)" rx="20" />
-          <rect x="10" y="10" width={SVG_SIZE - 20} height={SVG_SIZE - 20} fill="none" stroke="#6b4423" strokeWidth="4" rx="20" />
-
-          {BOARD_LINES.map(([from, to], idx) => (
-            <line
-              key={idx}
-              x1={toSvgX(POS_COORDS[from].x)}
-              y1={toSvgY(POS_COORDS[from].y)}
-              x2={toSvgX(POS_COORDS[to].x)}
-              y2={toSvgY(POS_COORDS[to].y)}
-              stroke="#4a3520"
-              strokeWidth="4"
-              strokeLinecap="round"
-            />
-          ))}
-
-          {POS_COORDS.map((coord, pos) => {
-            const cx = toSvgX(coord.x);
-            const cy = toSvgY(coord.y);
-            const isValid = validHighlights.has(pos);
-            const isRemovable = removableHighlights.has(pos);
-            const isSelected = gameState.selectedPiece === pos;
-            const isInMill = millPositions.has(pos);
-            const isAnimating = animatingPieces.has(pos);
-            const cellState = gameState.board[pos];
-
-            return (
-              <g key={pos} onClick={() => onPositionClick(pos)} className="cursor-pointer">
-                {isValid && cellState === 0 && (
-                  <>
-                    <circle cx={cx} cy={cy} r={24} fill="rgba(34, 197, 94, 0.15)" />
-                    <circle cx={cx} cy={cy} r={16} fill="rgba(34, 197, 94, 0.4)" className="animate-pulse" />
-                    <circle cx={cx} cy={cy} r={8} fill="rgba(34, 197, 94, 0.8)" />
-                  </>
-                )}
-
-                {isRemovable && (
-                  <>
-                    <circle cx={cx} cy={cy} r={28} fill="none" stroke="rgba(239, 68, 68, 0.7)" strokeWidth="3" strokeDasharray="6,4" className="animate-pulse" />
-                    <circle cx={cx} cy={cy} r={24} fill="rgba(239, 68, 68, 0.1)" />
-                  </>
-                )}
-
-                {isInMill && cellState !== 0 && (
-                  <circle cx={cx} cy={cy} r={26} fill="none" stroke="rgba(250, 204, 21, 0.6)" strokeWidth="3" filter="url(#glow)" />
-                )}
-
-                {isSelected && (
-                  <circle cx={cx} cy={cy} r={28} fill="none" stroke="rgba(96, 165, 250, 0.9)" strokeWidth="3" filter="url(#glow)" />
-                )}
-
-                {cellState === 0 && (
-                  <circle cx={cx} cy={cy} r={7} fill="#4a3520" opacity={0.6} />
-                )}
-
-                {cellState === 1 && (
-                  <g className={isAnimating ? 'animate-piece-in' : ''}>
-                    <circle cx={cx} cy={cy + 2} r={20} fill="rgba(0,0,0,0.3)" />
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={20}
-                      fill={playerFill}
-                      stroke={isSelected ? '#60a5fa' : playerStroke}
-                      strokeWidth={isSelected ? 4 : 3}
-                      filter="url(#shadow)"
-                    />
-                    <circle cx={cx - 6} cy={cy - 6} r={7} fill="rgba(255,255,255,0.2)" />
-                    <circle cx={cx - 4} cy={cy - 4} r={3} fill="rgba(255,255,255,0.3)" />
-                  </g>
-                )}
-
-                {cellState === 2 && (
-                  <g className={isAnimating ? 'animate-piece-in' : ''}>
-                    <circle cx={cx} cy={cy + 2} r={20} fill="rgba(0,0,0,0.3)" />
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={20}
-                      fill={aiFill}
-                      stroke={isRemovable ? '#ef4444' : aiStroke}
-                      strokeWidth={isRemovable ? 4 : 3}
-                      filter="url(#shadow)"
-                    />
-                    <circle cx={cx - 6} cy={cy - 6} r={7} fill="rgba(255,255,255,0.2)" />
-                    <circle cx={cx - 4} cy={cy - 4} r={3} fill="rgba(255,255,255,0.3)" />
-                  </g>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </div>
-  );
-}
-
-function RightPanel() {
-  return (
-    <div className="w-full lg:w-80 order-3">
-      <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 border border-white/10">
-        <h3 className="text-white font-bold mb-3">💡 ゲームのコツ</h3>
-        <div className="text-sm text-purple-200 space-y-2">
-          <p>🟢 <strong>緑のハイライト</strong> = 配置/移動可能な場所</p>
-          <p>🔴 <strong>赤の破線</strong> = 取れる相手の駒</p>
-          <p>🟡 <strong>金の光</strong> = ミルを構成する駒</p>
-          <p>🔵 <strong>青い輪</strong> = 選択中の駒</p>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-white/10">
-          <h4 className="text-purple-200 font-bold mb-2 text-sm">🎯 戦略</h4>
-          <ul className="text-xs text-purple-300 space-y-1">
-            <li>• 中央の交点は価値が高い</li>
-            <li>• 2つ並べたら3つ目を狙う</li>
-            <li>• 相手のミルを阻止しよう</li>
-            <li>• 駒が3個になったらフライト可能</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface WinnerModalProps {
-  gameState: GameState;
-  difficulty: 'easy' | 'normal' | 'hard';
-  activeMills: { mill: number[]; player: Player }[];
-  onPlayAgain: () => void;
-  onSettings: () => void;
-}
-
-function WinnerModal({ gameState, difficulty, activeMills, onPlayAgain, onSettings }: WinnerModalProps) {
-  const isWin = gameState.winner === 1;
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gradient-to-br from-slate-800 to-purple-900 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl border border-white/20">
-        <div className="text-8xl mb-4">
-          {isWin ? '🏆' : '💀'}
-        </div>
-        <h2 className="text-4xl font-bold text-white mb-3">
-          {isWin ? '勝利！' : '敗北...'}
-        </h2>
-        <p className="text-purple-200 text-lg mb-6">
-          {isWin
-            ? '見事です！AIを打ち負かしました！'
-            : 'AIに敗れました。再挑戦しましょう！'}
-        </p>
-        
-        <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
-          <h3 className="text-white font-bold mb-3 text-sm">📊 ゲーム統計</h3>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="bg-purple-500/10 rounded-lg p-2">
-              <div className="text-purple-300 text-xs">総手数</div>
-              <div className="text-white font-bold text-lg">{gameState.moveCount}</div>
-            </div>
-            <div className="bg-amber-500/10 rounded-lg p-2">
-              <div className="text-amber-300 text-xs">難易度</div>
-              <div className="text-white font-bold text-lg">{difficulty === 'easy' ? '簡単' : difficulty === 'normal' ? '普通' : '難しい'}</div>
-            </div>
-            <div className="bg-blue-500/10 rounded-lg p-2">
-              <div className="text-blue-300 text-xs">あなたの駒</div>
-              <div className="text-white font-bold text-lg">{gameState.piecesOnBoard[0]}</div>
-            </div>
-            <div className="bg-red-500/10 rounded-lg p-2">
-              <div className="text-red-300 text-xs">AIの駒</div>
-              <div className="text-white font-bold text-lg">{gameState.piecesOnBoard[1]}</div>
-            </div>
-            <div className="bg-blue-500/10 rounded-lg p-2">
-              <div className="text-blue-300 text-xs">あなたのミル</div>
-              <div className="text-white font-bold text-lg">{activeMills.filter(m => m.player === 1).length}</div>
-            </div>
-            <div className="bg-red-500/10 rounded-lg p-2">
-              <div className="text-red-300 text-xs">AIのミル</div>
-              <div className="text-white font-bold text-lg">{activeMills.filter(m => m.player === 2).length}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex gap-3 justify-center">
-          <button
-            onClick={onPlayAgain}
-            className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-3 px-6 rounded-xl transition-all hover:scale-105"
-          >
-            🔄 もう一度
-          </button>
-          <button
-            onClick={onSettings}
-            className="bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-3 px-6 rounded-xl transition-all border border-white/10"
-          >
-            ⚙️ 設定
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

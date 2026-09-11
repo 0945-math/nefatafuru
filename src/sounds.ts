@@ -1,13 +1,18 @@
 // Sound effects using Web Audio API
 class SoundManager {
-  private audioContext: AudioContext | null = null;
+  private ctx: AudioContext | null = null;
   private enabled: boolean = true;
 
-  private getContext(): AudioContext {
-    if (!this.audioContext) {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  private getCtx(): AudioContext | null {
+    if (!this.enabled) return null;
+    if (!this.ctx) {
+      try {
+        this.ctx = new AudioContext();
+      } catch {
+        return null;
+      }
     }
-    return this.audioContext;
+    return this.ctx;
   }
 
   setEnabled(enabled: boolean) {
@@ -18,79 +23,154 @@ class SoundManager {
     return this.enabled;
   }
 
-  private playTone(frequency: number, duration: number, type: OscillatorType = 'sine', volume: number = 0.3) {
-    if (!this.enabled) return;
-    
-    try {
-      const ctx = this.getContext();
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      oscillator.frequency.value = frequency;
-      oscillator.type = type;
-      
-      gainNode.gain.setValueAtTime(volume, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-      
-      oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + duration);
-    } catch (e) {
-      // Silently fail if audio context is not available
-    }
-  }
-
-  // Place piece sound
   playPlace() {
-    this.playTone(440, 0.15, 'sine', 0.2);
-    setTimeout(() => this.playTone(554, 0.1, 'sine', 0.15), 50);
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
   }
 
-  // Move piece sound
   playMove() {
-    this.playTone(330, 0.1, 'triangle', 0.2);
-    setTimeout(() => this.playTone(440, 0.1, 'triangle', 0.15), 80);
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.type = 'sine';
+    osc.frequency.value = 330;
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
   }
 
-  // Remove piece sound
-  playRemove() {
-    this.playTone(220, 0.2, 'sawtooth', 0.15);
-    setTimeout(() => this.playTone(165, 0.3, 'sawtooth', 0.1), 100);
-  }
-
-  // Mill formed sound
   playMill() {
-    this.playTone(523, 0.15, 'sine', 0.25);
-    setTimeout(() => this.playTone(659, 0.15, 'sine', 0.25), 100);
-    setTimeout(() => this.playTone(784, 0.2, 'sine', 0.3), 200);
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    [523, 659, 784].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.1 + 0.2);
+      
+      osc.start(ctx.currentTime + i * 0.1);
+      osc.stop(ctx.currentTime + i * 0.1 + 0.2);
+    });
   }
 
-  // Win sound
+  playRemove() {
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.type = 'sawtooth';
+    osc.frequency.value = 220;
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+    
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.2);
+  }
+
   playWin() {
-    const notes = [523, 659, 784, 1047];
-    notes.forEach((note, i) => {
-      setTimeout(() => this.playTone(note, 0.3, 'sine', 0.2), i * 150);
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    [523, 659, 784, 1047].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.15 + 0.3);
+      
+      osc.start(ctx.currentTime + i * 0.15);
+      osc.stop(ctx.currentTime + i * 0.15 + 0.3);
     });
   }
 
-  // Lose sound
   playLose() {
-    const notes = [440, 370, 330, 262];
-    notes.forEach((note, i) => {
-      setTimeout(() => this.playTone(note, 0.4, 'sine', 0.15), i * 200);
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    [400, 350, 300, 250].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.2 + 0.3);
+      
+      osc.start(ctx.currentTime + i * 0.2);
+      osc.stop(ctx.currentTime + i * 0.2 + 0.3);
     });
   }
 
-  // Select piece sound
-  playSelect() {
-    this.playTone(600, 0.08, 'sine', 0.15);
+  playInvalid() {
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.type = 'square';
+    osc.frequency.value = 150;
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
   }
 
-  // Invalid move sound
-  playInvalid() {
-    this.playTone(200, 0.15, 'square', 0.1);
+  playSelect() {
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.type = 'sine';
+    osc.frequency.value = 600;
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+    
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
   }
 }
 

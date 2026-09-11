@@ -143,8 +143,6 @@ function App() {
         return;
       }
       
-      setAiThinkingText(aiMove.thinking || '手を決定');
-      
       setTimeout(() => {
         setGameState(prev => {
           let newState = { ...prev };

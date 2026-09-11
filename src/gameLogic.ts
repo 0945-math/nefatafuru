@@ -1,4 +1,4 @@
-// モラバラバ (Morabaraba) - Final Game Logic
+// モラバラバ (Morabaraba) - Ultimate Game Logic
 
 export type Player = 1 | 2;
 export type CellState = 0 | 1 | 2;
@@ -15,7 +15,7 @@ export interface GameState {
   selectedPiece: number | null;
   message: string;
   moveCount: number;
-  lastAction: { type: string; pos: number } | null;
+  millsFormed: [number, number];
 }
 
 // 24 positions on the board
@@ -77,7 +77,7 @@ export function createInitialState(): GameState {
     selectedPiece: null,
     message: 'あなたの番です - 駒を配置してください',
     moveCount: 0,
-    lastAction: null,
+    millsFormed: [0, 0],
   };
 }
 
@@ -92,7 +92,6 @@ export function isInMill(board: Board, pos: number): boolean {
 export function canRemovePiece(board: Board, pos: number, opponent: Player): boolean {
   if (board[pos] !== opponent) return false;
   if (!isInMill(board, pos)) return true;
-  // Can remove if all opponent pieces are in mills
   for (let i = 0; i < 24; i++) {
     if (board[i] === opponent && !isInMill(board, i)) {
       return false;
@@ -162,6 +161,14 @@ function formsMill(board: Board, pos: number, player: Player): boolean {
   );
 }
 
+function countMills(board: Board, player: Player): number {
+  let count = 0;
+  for (const mill of MILLS) {
+    if (mill.every(p => board[p] === player)) count++;
+  }
+  return count;
+}
+
 export function placePiece(state: GameState, pos: number): GameState {
   if (state.board[pos] !== 0 || state.phase !== 'placing' || state.winner) return state;
 
@@ -174,17 +181,26 @@ export function placePiece(state: GameState, pos: number): GameState {
   newPiecesToPlace[pIdx]--;
   newPiecesOnBoard[pIdx]++;
 
+  const newMillsFormed: [number, number] = [...state.millsFormed];
+  let millJustFormed = false;
+
   let newState: GameState = {
     ...state,
     board: newBoard,
     piecesToPlace: newPiecesToPlace,
     piecesOnBoard: newPiecesOnBoard,
     moveCount: state.moveCount + 1,
-    lastAction: { type: 'place', pos },
   };
 
-  // Check if mill formed
   if (formsMill(newBoard, pos, state.currentPlayer)) {
+    const newMills = countMills(newBoard, state.currentPlayer);
+    const oldMills = countMills(state.board, state.currentPlayer);
+    newMillsFormed[pIdx] += (newMills - oldMills);
+    newState.millsFormed = newMillsFormed;
+    millJustFormed = true;
+  }
+
+  if (millJustFormed) {
     const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
     const removable = getRemovablePieces(newBoard, opponent);
     if (removable.length > 0) {
@@ -219,7 +235,6 @@ export function removePiece(state: GameState, pos: number): GameState {
     board: newBoard,
     piecesOnBoard: newPiecesOnBoard,
     removingPiece: false,
-    lastAction: { type: 'remove', pos },
   };
 
   return advanceTurn(newState);
@@ -254,16 +269,26 @@ export function movePiece(state: GameState, from: number, to: number): GameState
   newBoard[from] = 0;
   newBoard[to] = state.currentPlayer;
 
+  const pIdx = state.currentPlayer - 1;
+  const newMillsFormed: [number, number] = [...state.millsFormed];
+  let millJustFormed = false;
+
   let newState: GameState = {
     ...state,
     board: newBoard,
     selectedPiece: null,
     moveCount: state.moveCount + 1,
-    lastAction: { type: flying ? 'fly' : 'move', pos: to },
   };
 
-  // Check if mill formed
   if (formsMill(newBoard, to, state.currentPlayer)) {
+    const newMills = countMills(newBoard, state.currentPlayer);
+    const oldMills = countMills(state.board, state.currentPlayer);
+    newMillsFormed[pIdx] += (newMills - oldMills);
+    newState.millsFormed = newMillsFormed;
+    millJustFormed = true;
+  }
+
+  if (millJustFormed) {
     const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
     const removable = getRemovablePieces(newBoard, opponent);
     if (removable.length > 0) {
@@ -284,7 +309,6 @@ function advanceTurn(state: GameState): GameState {
   const nextPlayer: Player = state.currentPlayer === 1 ? 2 : 1;
   const nextIdx = nextPlayer - 1;
 
-  // Check win: opponent has < 3 total pieces
   const nextTotal = state.piecesToPlace[nextIdx] + state.piecesOnBoard[nextIdx];
   if (nextTotal < 3) {
     return {
@@ -297,7 +321,6 @@ function advanceTurn(state: GameState): GameState {
     };
   }
 
-  // Check if we should transition to moving phase
   if (state.piecesToPlace[0] === 0 && state.piecesToPlace[1] === 0 && state.phase === 'placing') {
     const canMove = hasValidMoves(state.board, nextPlayer);
     if (!canMove) {
@@ -323,7 +346,6 @@ function advanceTurn(state: GameState): GameState {
     };
   }
 
-  // Still in placing phase
   if (state.phase === 'placing') {
     if (state.piecesToPlace[nextIdx] > 0) {
       return {
@@ -345,7 +367,6 @@ function advanceTurn(state: GameState): GameState {
     }
   }
 
-  // Moving phase
   const canMove = hasValidMoves(state.board, nextPlayer);
   if (!canMove) {
     return {

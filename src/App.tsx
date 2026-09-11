@@ -263,10 +263,12 @@ function App() {
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">⚔️ 非対称ゲーム</h3>
                   <p>攻撃側（24駒）vs 防御側（12駒 + 王）の非対称なゲームです</p>
+                  <p className="text-sm mt-1">攻撃側が先手です</p>
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">🗡️ 攻撃側の目的</h3>
                   <p>中央の王を四方から囲んで捕獲する</p>
+                  <p className="text-sm mt-1">王が玉座の隣にある場合、3方向を囲めば捕獲できます</p>
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">🛡️ 防御側の目的</h3>
@@ -275,14 +277,17 @@ function App() {
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">♜ 駒の動き</h3>
                   <p>すべての駒はチェスのルークのように縦横に何マスでも移動できます（他の駒を飛び越えることはできません）</p>
+                  <p className="text-sm mt-1">王座と四隅には王のみが入れます</p>
                 </div>
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">⚡ 捕獲ルール</h3>
                   <p>敵の駒を自分の駒ではさむと捕獲できます（王は除く）</p>
+                  <p className="text-sm mt-1">王座や四隅も「はさむ」役割を果たします</p>
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-white mb-2">👑 王の特別ルール</h3>
-                  <p>王は中央の王座と四隅にのみ入ることができます</p>
+                  <h3 className="text-xl font-bold text-white mb-2">👑 王の捕獲</h3>
+                  <p>王は4方向を攻撃側で囲まれると捕獲されます</p>
+                  <p className="text-sm mt-1">ただし、盤端では捕獲できません</p>
                 </div>
               </div>
               <button
@@ -338,6 +343,7 @@ function App() {
                 <span className="text-white font-bold text-sm">攻撃側 {gameState.currentPlayer === 'attacker' && !gameState.winner ? '(ターン)' : ''}</span>
               </div>
               <div className="text-red-300 text-xs">駒数: {attackerCount} / 24</div>
+              <div className="text-red-300 text-xs mt-1">目的: 王を捕獲</div>
             </div>
 
             {/* Defender info */}
@@ -349,6 +355,7 @@ function App() {
                 <span className="text-white font-bold text-sm">防御側 {gameState.currentPlayer === 'defender' && !gameState.winner ? '(ターン)' : ''}</span>
               </div>
               <div className="text-blue-300 text-xs">駒数: {defenderCount} / 12 {hasKing ? '+ 👑' : '(王捕獲!)'}</div>
+              <div className="text-blue-300 text-xs mt-1">目的: 王を四隅に逃がす</div>
             </div>
 
             {/* Move counter */}

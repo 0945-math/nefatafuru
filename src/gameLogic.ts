@@ -27,16 +27,16 @@ export const CORNERS = [
 
 export const CENTER = { x: 5, y: 5 };
 
-// 攻撃側の初期配置（24駒）
+// 攻撃側の初期配置（24駒 - 各辺に6駒ずつ）
 const ATTACKER_POSITIONS = [
   // 上辺
-  { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }, { x: 6, y: 0 }, { x: 7, y: 0 },
+  { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }, { x: 6, y: 0 }, { x: 7, y: 0 },
   // 下辺
-  { x: 3, y: 10 }, { x: 4, y: 10 }, { x: 5, y: 10 }, { x: 6, y: 10 }, { x: 7, y: 10 },
+  { x: 2, y: 10 }, { x: 3, y: 10 }, { x: 4, y: 10 }, { x: 5, y: 10 }, { x: 6, y: 10 }, { x: 7, y: 10 },
   // 左辺
-  { x: 0, y: 3 }, { x: 0, y: 4 }, { x: 0, y: 5 }, { x: 0, y: 6 }, { x: 0, y: 7 },
+  { x: 0, y: 2 }, { x: 0, y: 3 }, { x: 0, y: 4 }, { x: 0, y: 5 }, { x: 0, y: 6 }, { x: 0, y: 7 },
   // 右辺
-  { x: 10, y: 3 }, { x: 10, y: 4 }, { x: 10, y: 5 }, { x: 10, y: 6 }, { x: 10, y: 7 },
+  { x: 10, y: 2 }, { x: 10, y: 3 }, { x: 10, y: 4 }, { x: 10, y: 5 }, { x: 10, y: 6 }, { x: 10, y: 7 },
 ];
 
 // 防御側の初期配置（12駒 + 王）
@@ -54,12 +54,12 @@ const DEFENDER_POSITIONS = [
 export function createInitialState(): GameState {
   const board: Board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
   
-  // 攻撃側の駒を配置
+  // 攻撃側の駒を配置（24駒）
   for (const pos of ATTACKER_POSITIONS) {
     board[pos.y][pos.x] = 'attacker';
   }
   
-  // 防御側の駒を配置
+  // 防御側の駒を配置（12駒）
   for (const pos of DEFENDER_POSITIONS) {
     board[pos.y][pos.x] = 'defender';
   }
@@ -69,7 +69,7 @@ export function createInitialState(): GameState {
   
   return {
     board,
-    currentPlayer: 'attacker',
+    currentPlayer: 'attacker', // 攻撃側が先手
     winner: null,
     selectedPiece: null,
     message: '攻撃側の番です',
@@ -228,6 +228,11 @@ export function isKingCaptured(state: GameState): boolean {
   
   if (kingX === -1) return false;
   
+  // 盤端では捕獲不可（Fetlarルール）
+  if (kingX === 0 || kingX === BOARD_SIZE - 1 || kingY === 0 || kingY === BOARD_SIZE - 1) {
+    return false;
+  }
+  
   // 王の周囲4方向をチェック
   const directions = [
     { dx: 0, dy: -1 },
@@ -237,6 +242,13 @@ export function isKingCaptured(state: GameState): boolean {
   ];
   
   let surroundedCount = 0;
+  let isNextToThrone = false;
+  
+  // 玉座の隣かどうかチェック
+  if ((kingX === 4 && kingY === 5) || (kingX === 6 && kingY === 5) ||
+      (kingX === 5 && kingY === 4) || (kingX === 5 && kingY === 6)) {
+    isNextToThrone = true;
+  }
   
   for (const dir of directions) {
     const nx = kingX + dir.dx;
@@ -250,16 +262,28 @@ export function isKingCaptured(state: GameState): boolean {
     
     const piece = state.board[ny][nx];
     
-    // 攻撃側の駒または敵対的な特殊な位置
-    if (piece === 'attacker' || 
-        (isThrone(nx, ny) && piece === 0) ||
-        (isCorner(nx, ny) && piece === 0)) {
+    // 攻撃側の駒
+    if (piece === 'attacker') {
+      surroundedCount++;
+      continue;
+    }
+    
+    // 玉座（王が玉座の隣にある場合、玉座は敵対的）
+    if (isThrone(nx, ny) && piece === 0) {
+      if (isNextToThrone) {
+        surroundedCount++;
+      }
+    }
+    
+    // 四隅（常に敵対的）
+    if (isCorner(nx, ny) && piece === 0) {
       surroundedCount++;
     }
   }
   
-  // 4方向すべてが囲まれている
-  return surroundedCount === 4;
+  // 玉座の隣では3方向で十分、それ以外では4方向必要
+  const requiredSides = isNextToThrone ? 3 : 4;
+  return surroundedCount >= requiredSides;
 }
 
 // 王が脱出したかチェック

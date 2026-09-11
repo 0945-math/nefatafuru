@@ -34,6 +34,17 @@ function getActiveMills(board: (0 | 1 | 2)[]): { mill: number[]; player: Player 
   return result;
 }
 
+// Particle effect
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  color: string;
+}
+
 function App() {
   const [gameState, setGameState] = useState<GameState>(createInitialState());
   const [aiThinking, setAiThinking] = useState(false);
@@ -43,13 +54,16 @@ function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [animatingPieces, setAnimatingPieces] = useState<Set<number>>(new Set());
   const [showRules, setShowRules] = useState(false);
+  const [particles, setParticles] = useState<Particle[]>([]);
   const prevBoardRef = useRef<(0 | 1 | 2)[]>(Array(24).fill(0));
+  const particleIdRef = useRef(0);
 
   const resetGame = useCallback(() => {
     setGameState(createInitialState());
     setAiThinking(false);
     setGameStarted(true);
     setAnimatingPieces(new Set());
+    setParticles([]);
     prevBoardRef.current = Array(24).fill(0);
   }, []);
 
@@ -58,6 +72,43 @@ function App() {
       soundManager.setEnabled(!prev);
       return !prev;
     });
+  }, []);
+
+  // Particle animation
+  useEffect(() => {
+    if (particles.length === 0) return;
+
+    const interval = setInterval(() => {
+      setParticles(prev =>
+        prev
+          .map(p => ({
+            ...p,
+            x: p.x + p.vx,
+            y: p.y + p.vy,
+            vy: p.vy + 0.5,
+            life: p.life - 1,
+          }))
+          .filter(p => p.life > 0)
+      );
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [particles.length]);
+
+  const createParticles = useCallback((x: number, y: number, color: string, count: number = 20) => {
+    const newParticles: Particle[] = [];
+    for (let i = 0; i < count; i++) {
+      newParticles.push({
+        id: particleIdRef.current++,
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 10,
+        vy: (Math.random() - 0.5) * 10 - 5,
+        life: 30 + Math.random() * 20,
+        color,
+      });
+    }
+    setParticles(prev => [...prev, ...newParticles]);
   }, []);
 
   // Track board changes for animations
@@ -69,6 +120,15 @@ function App() {
     for (let i = 0; i < 24; i++) {
       if (prev[i] !== curr[i]) {
         newAnimating.add(i);
+        const coord = POS_COORDS[i];
+        const x = toSvgX(coord.x);
+        const y = toSvgY(coord.y);
+        
+        if (curr[i] !== 0) {
+          createParticles(x, y, curr[i] === 1 ? '#60a5fa' : '#f59e0b', 15);
+        } else {
+          createParticles(x, y, '#ef4444', 20);
+        }
       }
     }
     
@@ -78,7 +138,7 @@ function App() {
     }
     
     prevBoardRef.current = [...curr];
-  }, [gameState.board]);
+  }, [gameState.board, createParticles]);
 
   // AI move execution
   useEffect(() => {
@@ -248,10 +308,17 @@ function App() {
 
   if (!gameStarted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-white/20">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+        {/* Animated background */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-0 left-0 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob" />
+          <div className="absolute top-0 right-0 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000" />
+          <div className="absolute bottom-0 left-1/2 w-96 h-96 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-4000" />
+        </div>
+
+        <div className="relative bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-lg w-full border border-white/20">
           <div className="text-center mb-8">
-            <div className="text-7xl mb-4">♟️</div>
+            <div className="text-7xl mb-4 animate-float">♟️</div>
             <h1 className="text-5xl font-bold text-white mb-3">モラバラバ</h1>
             <p className="text-purple-200 text-xl">Morabaraba - AI対戦ボードゲーム</p>
           </div>
@@ -383,14 +450,35 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col relative overflow-hidden">
+      {/* Animated background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-0 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob" />
+        <div className="absolute top-0 right-0 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob animation-delay-2000" />
+        <div className="absolute bottom-0 left-1/2 w-96 h-96 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob animation-delay-4000" />
+      </div>
+
+      {/* Particles */}
+      <svg className="absolute inset-0 w-full h-full pointer-events-none z-50">
+        {particles.map(p => (
+          <circle
+            key={p.id}
+            cx={p.x}
+            cy={p.y}
+            r={3}
+            fill={p.color}
+            opacity={p.life / 50}
+          />
+        ))}
+      </svg>
+
       {/* Header */}
-      <header className="text-center py-4 px-4">
+      <header className="relative z-10 text-center py-4 px-4">
         <h1 className="text-3xl md:text-4xl font-bold text-white">♟️ モラバラバ</h1>
       </header>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 px-4 pb-4">
+      <main className="relative z-10 flex-1 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 px-4 pb-4">
         {/* Left Panel */}
         <div className="w-full lg:w-80 order-2 lg:order-1">
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-5 border border-white/10 space-y-4">

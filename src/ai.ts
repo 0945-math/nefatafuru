@@ -1,15 +1,10 @@
-// Ultimate AI for Morabaraba - Minimax with Alpha-Beta Pruning & Iterative Deepening
-import {
-  Board, Player, GameState, ADJACENCY, MILLS,
-  isInMill, canRemovePiece,
-  isFlying, hasValidMoves,
-  getValidPlacements, getRemovablePieces,
-} from './gameLogic';
+// 高性能AI - Minimax with Alpha-Beta Pruning
+import { Board, Player, GameState, ADJACENCY, MILLS, isInMill, canRemovePiece, isFlying, hasValidMoves, getValidPlacements, getRemovablePieces } from './gameLogic';
 
 const DEPTH_MAP = { easy: 2, normal: 4, hard: 6 };
 
-// Position weights - center and intersections are more valuable
-const POS_WEIGHT: number[] = [
+// 位置の重要度（中央が高い）
+const POS_WEIGHT = [
   2, 3, 2,
   3, 5, 3,
   4, 5, 4,
@@ -64,28 +59,18 @@ function applyMove(board: Board, move: Move, player: Player): Board {
 }
 
 function formsMill(board: Board, pos: number, player: Player): boolean {
-  return MILLS.some(mill =>
-    mill.includes(pos) && mill.every(p => board[p] === player)
-  );
+  return MILLS.some(mill => mill.includes(pos) && mill.every(p => board[p] === player));
 }
 
 function countMills(board: Board, player: Player): number {
-  let count = 0;
-  for (const mill of MILLS) {
-    if (mill.every(p => board[p] === player)) count++;
-  }
-  return count;
+  return MILLS.filter(mill => mill.every(p => board[p] === player)).length;
 }
 
 function countPieces(board: Board, player: Player): number {
-  let count = 0;
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === player) count++;
-  }
-  return count;
+  return board.filter(c => c === player).length;
 }
 
-// Smart removal: pick the piece that hurts opponent most
+// 最適な駒の除去を選択
 function getBestRemoval(board: Board, removingPlayer: Player): number {
   const opponent: Player = removingPlayer === 1 ? 2 : 1;
   const removable = getRemovablePieces(board, opponent);
@@ -99,24 +84,24 @@ function getBestRemoval(board: Board, removingPlayer: Player): number {
   for (const pos of removable) {
     let score = 0;
     
-    // Prefer removing pieces that are part of potential mills
+    // ミルに参加している駒は除去価値が高い
     for (const mill of MILLS) {
       if (!mill.includes(pos)) continue;
       const oppCount = mill.filter(p => board[p] === opponent).length;
-      if (oppCount === 2) score += 100;
-      if (oppCount === 3) score += 200;
+      if (oppCount === 2) score += 150;
+      if (oppCount === 3) score += 300;
     }
     
-    // Prefer removing pieces at valuable positions
-    score += POS_WEIGHT[pos] * 20;
+    // 重要な位置の駒は除去価値が高い
+    score += POS_WEIGHT[pos] * 25;
     
-    // Prefer removing pieces with many connections
+    // 多くの駒と隣接している駒は除去価値が高い
     const adjOwn = ADJACENCY[pos].filter(a => board[a] === opponent).length;
-    score += adjOwn * 30;
+    score += adjOwn * 40;
     
-    // Prefer removing pieces that block opponent's flying
+    // フライトを防ぐために、相手の駒が4個の場合は除去価値が高い
     const oppCount = countPieces(board, opponent);
-    if (oppCount === 4) score += 50; // Removing could prevent flying
+    if (oppCount === 4) score += 80;
 
     if (score > bestScore) {
       bestScore = score;
@@ -126,9 +111,12 @@ function getBestRemoval(board: Board, removingPlayer: Player): number {
   return bestPiece;
 }
 
+// 盤面評価関数
 function evaluate(board: Board, piecesToPlace: [number, number], piecesOnBoard: [number, number]): number {
   const p1Total = piecesToPlace[0] + piecesOnBoard[0];
   const p2Total = piecesToPlace[1] + piecesOnBoard[1];
+  
+  // 勝利/敗北判定
   if (p1Total < 3) return 100000;
   if (p2Total < 3) return -100000;
 
@@ -139,52 +127,58 @@ function evaluate(board: Board, piecesToPlace: [number, number], piecesOnBoard: 
 
   let score = 0;
 
-  // Material (piece count) - very important
-  score += (piecesOnBoard[1] - piecesOnBoard[0]) * 1000;
-  score += (piecesToPlace[1] - piecesToPlace[0]) * 250;
+  // 1. 駒の数（最も重要）
+  score += (piecesOnBoard[1] - piecesOnBoard[0]) * 1200;
+  score += (piecesToPlace[1] - piecesToPlace[0]) * 300;
 
-  // Mills formed
-  score += (countMills(board, 2) - countMills(board, 1)) * 600;
+  // 2. ミルの数
+  score += (countMills(board, 2) - countMills(board, 1)) * 700;
 
-  // Two-in-a-row potential
+  // 3. ミル形成のチャンス（2つ並んでいる）
   for (const mill of MILLS) {
     const p2 = mill.filter(p => board[p] === 2).length;
     const p1 = mill.filter(p => board[p] === 1).length;
     const empty = mill.filter(p => board[p] === 0).length;
-    if (p2 === 2 && empty === 1) score += 200;
-    if (p1 === 2 && empty === 1) score -= 200;
-    if (p2 === 1 && empty === 2) score += 30;
-    if (p1 === 1 && empty === 2) score -= 30;
+    
+    if (p2 === 2 && empty === 1) score += 250;
+    if (p1 === 2 && empty === 1) score -= 250;
+    if (p2 === 1 && empty === 2) score += 40;
+    if (p1 === 1 && empty === 2) score -= 40;
   }
 
-  // Position
+  // 4. 位置の重要度
   for (let i = 0; i < 24; i++) {
-    if (board[i] === 2) score += POS_WEIGHT[i] * 25;
-    if (board[i] === 1) score -= POS_WEIGHT[i] * 25;
+    if (board[i] === 2) score += POS_WEIGHT[i] * 30;
+    if (board[i] === 1) score -= POS_WEIGHT[i] * 30;
   }
 
-  // Mobility
+  // 5. 移動の自由度
   if (piecesToPlace[0] === 0 && piecesToPlace[1] === 0) {
     const f1 = isFlying(board, 1);
     const f2 = isFlying(board, 2);
     const m1 = generateMoves(board, 1, piecesToPlace).length;
     const m2 = generateMoves(board, 2, piecesToPlace).length;
-    score += (m2 - m1) * 15;
-    if (f2 && !f1) score += 300;
-    if (f1 && !f2) score -= 300;
+    
+    score += (m2 - m1) * 20;
+    
+    // フライトは非常に強力
+    if (f2 && !f1) score += 400;
+    if (f1 && !f2) score -= 400;
   }
 
-  // Blocking opponent mills
+  // 6. 相手のミルをブロック
   for (const mill of MILLS) {
     const p1 = mill.filter(p => board[p] === 1).length;
     const p2 = mill.filter(p => board[p] === 2).length;
-    if (p1 === 2 && p2 === 1) score += 100;
-    if (p2 === 2 && p1 === 1) score -= 100;
+    
+    if (p1 === 2 && p2 === 1) score += 120;
+    if (p2 === 2 && p1 === 1) score -= 120;
   }
 
   return score;
 }
 
+// Minimax with Alpha-Beta Pruning
 function minimax(
   board: Board,
   depth: number,
@@ -198,6 +192,7 @@ function minimax(
 
   const p1Total = piecesToPlace[0] + piecesOnBoard[0];
   const p2Total = piecesToPlace[1] + piecesOnBoard[1];
+  
   if (p1Total < 3) return 100000 + depth;
   if (p2Total < 3) return -100000 - depth;
 
@@ -211,7 +206,7 @@ function minimax(
   const moves = generateMoves(board, player, piecesToPlace);
   if (moves.length === 0) return isMaximizing ? -100000 - depth : 100000 + depth;
 
-  // Move ordering: prioritize moves that form mills
+  // ムーブオーダリング（ミル形成を優先）
   const millMoves: Move[] = [];
   const blockingMoves: Move[] = [];
   const otherMoves: Move[] = [];
@@ -252,6 +247,7 @@ function minimax(
       } else {
         evalScore = minimax(newBoard, depth - 1, alpha, beta, false, nPTP, nPOB);
       }
+      
       maxEval = Math.max(maxEval, evalScore);
       alpha = Math.max(alpha, evalScore);
       if (beta <= alpha) break;
@@ -273,6 +269,7 @@ function minimax(
       } else {
         evalScore = minimax(newBoard, depth - 1, alpha, beta, true, nPTP, nPOB);
       }
+      
       minEval = Math.min(minEval, evalScore);
       beta = Math.min(beta, evalScore);
       if (beta <= alpha) break;
@@ -295,7 +292,7 @@ export function getAIMove(state: GameState, difficulty: 'easy' | 'normal' | 'har
 
   if (moves.length === 0) return null;
 
-  // Easy: 50% random
+  // 簡単モード：50%ランダム
   if (difficulty === 'easy' && Math.random() < 0.5) {
     const m = moves[Math.floor(Math.random() * moves.length)];
     const result: AIMove = { type: m.type, to: m.to };
@@ -305,7 +302,7 @@ export function getAIMove(state: GameState, difficulty: 'easy' | 'normal' | 'har
     return result;
   }
 
-  // Normal: 15% random
+  // 普通モード：15%ランダム
   if (difficulty === 'normal' && Math.random() < 0.15) {
     const m = moves[Math.floor(Math.random() * moves.length)];
     const result: AIMove = { type: m.type, to: m.to };

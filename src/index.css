@@ -1,78 +1,8 @@
 @import "tailwindcss";
 
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes bounce-in {
-  0% { transform: scale(0); opacity: 0; }
-  50% { transform: scale(1.1); }
-  70% { transform: scale(0.95); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-@keyframes slide-up {
-  from { transform: translateY(30px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-@keyframes blob {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(30px, -50px) scale(1.1); }
-  50% { transform: translate(-20px, 20px) scale(0.9); }
-  75% { transform: translate(50px, 50px) scale(1.05); }
-}
-
-.animate-fade-in {
-  animation: fade-in 0.3s ease-out;
-}
-
-.animate-bounce-in {
-  animation: bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-.animate-slide-up {
-  animation: slide-up 0.4s ease-out;
-}
-
-.animate-blob {
-  animation: blob 7s infinite;
-}
-
-.animation-delay-2000 {
-  animation-delay: 2s;
-}
-
-.animation-delay-4000 {
-  animation-delay: 4s;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(251, 191, 36, 0.1);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(to bottom, #d97706, #ea580c);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(to bottom, #b45309, #c2410c);
-}
-
 /* Smooth transitions */
 * {
-  transition-property: background-color, border-color, color, fill, stroke;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Prevent text selection on game elements */
@@ -81,17 +11,25 @@ svg {
   -webkit-user-select: none;
 }
 
-/* Better button press effect */
-button:active {
-  transform: scale(0.97);
+html, body {
+  overflow-x: hidden;
 }
 
-/* Glow effect */
-@keyframes glow {
-  0%, 100% { box-shadow: 0 0 5px rgba(251, 191, 36, 0.5); }
-  50% { box-shadow: 0 0 20px rgba(251, 191, 36, 0.8); }
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-.glow {
-  animation: glow 2s ease-in-out infinite;
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 250, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.5);
 }

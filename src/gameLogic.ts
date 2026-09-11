@@ -1,8 +1,7 @@
-// モラバラバ (Morabaraba) - Ultimate Game Logic
+// モラバラバ (Morabaraba) - シンプルで堅牢なゲームロジック
 
 export type Player = 1 | 2;
-export type CellState = 0 | 1 | 2;
-export type Board = CellState[];
+export type Board = (0 | 1 | 2)[];
 
 export interface GameState {
   board: Board;
@@ -14,8 +13,6 @@ export interface GameState {
   winner: Player | null;
   selectedPiece: number | null;
   message: string;
-  moveCount: number;
-  millsFormed: [number, number];
 }
 
 // 24 positions on the board
@@ -67,7 +64,7 @@ export const POS_COORDS: { x: number; y: number }[] = [
 
 export function createInitialState(): GameState {
   return {
-    board: Array(24).fill(0) as Board,
+    board: Array(24).fill(0),
     currentPlayer: 1,
     phase: 'placing',
     piecesToPlace: [12, 12],
@@ -76,22 +73,21 @@ export function createInitialState(): GameState {
     winner: null,
     selectedPiece: null,
     message: 'あなたの番です - 駒を配置してください',
-    moveCount: 0,
-    millsFormed: [0, 0],
   };
 }
 
 export function isInMill(board: Board, pos: number): boolean {
-  const cellValue = board[pos];
-  if (cellValue === 0) return false;
+  const player = board[pos];
+  if (player === 0) return false;
   return MILLS.some(mill =>
-    mill.includes(pos) && mill.every(p => board[p] === cellValue)
+    mill.includes(pos) && mill.every(p => board[p] === player)
   );
 }
 
 export function canRemovePiece(board: Board, pos: number, opponent: Player): boolean {
   if (board[pos] !== opponent) return false;
   if (!isInMill(board, pos)) return true;
+  // Can remove if all opponent pieces are in mills
   for (let i = 0; i < 24; i++) {
     if (board[i] === opponent && !isInMill(board, i)) {
       return false;
@@ -101,11 +97,7 @@ export function canRemovePiece(board: Board, pos: number, opponent: Player): boo
 }
 
 export function isFlying(board: Board, player: Player): boolean {
-  let count = 0;
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === player) count++;
-  }
-  return count === 3;
+  return board.filter(c => c === player).length === 3;
 }
 
 export function hasValidMoves(board: Board, player: Player): boolean {
@@ -113,60 +105,33 @@ export function hasValidMoves(board: Board, player: Player): boolean {
   for (let from = 0; from < 24; from++) {
     if (board[from] !== player) continue;
     if (flying) {
-      for (let to = 0; to < 24; to++) {
-        if (board[to] === 0 && from !== to) return true;
-      }
+      if (board.some(c => c === 0)) return true;
     } else {
-      for (const to of ADJACENCY[from]) {
-        if (board[to] === 0) return true;
-      }
+      if (ADJACENCY[from].some(to => board[to] === 0)) return true;
     }
   }
   return false;
 }
 
 export function getValidPlacements(board: Board): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === 0) result.push(i);
-  }
-  return result;
+  return board.map((c, i) => c === 0 ? i : -1).filter(i => i >= 0);
 }
 
 export function getValidTargets(board: Board, from: number, player: Player): number[] {
-  const flying = isFlying(board, player);
-  if (flying) {
-    const result: number[] = [];
-    for (let i = 0; i < 24; i++) {
-      if (board[i] === 0 && i !== from) result.push(i);
-    }
-    return result;
+  if (isFlying(board, player)) {
+    return board.map((c, i) => c === 0 && i !== from ? i : -1).filter(i => i >= 0);
   }
   return ADJACENCY[from].filter(i => board[i] === 0);
 }
 
 export function getRemovablePieces(board: Board, opponent: Player): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < 24; i++) {
-    if (board[i] === opponent && canRemovePiece(board, i, opponent)) {
-      result.push(i);
-    }
-  }
-  return result;
+  return board.map((c, i) => c === opponent && canRemovePiece(board, i, opponent) ? i : -1).filter(i => i >= 0);
 }
 
 function formsMill(board: Board, pos: number, player: Player): boolean {
   return MILLS.some(mill =>
     mill.includes(pos) && mill.every(p => board[p] === player)
   );
-}
-
-function countMills(board: Board, player: Player): number {
-  let count = 0;
-  for (const mill of MILLS) {
-    if (mill.every(p => board[p] === player)) count++;
-  }
-  return count;
 }
 
 export function placePiece(state: GameState, pos: number): GameState {
@@ -181,26 +146,15 @@ export function placePiece(state: GameState, pos: number): GameState {
   newPiecesToPlace[pIdx]--;
   newPiecesOnBoard[pIdx]++;
 
-  const newMillsFormed: [number, number] = [...state.millsFormed];
-  let millJustFormed = false;
-
   let newState: GameState = {
     ...state,
     board: newBoard,
     piecesToPlace: newPiecesToPlace,
     piecesOnBoard: newPiecesOnBoard,
-    moveCount: state.moveCount + 1,
   };
 
+  // Check if mill formed
   if (formsMill(newBoard, pos, state.currentPlayer)) {
-    const newMills = countMills(newBoard, state.currentPlayer);
-    const oldMills = countMills(state.board, state.currentPlayer);
-    newMillsFormed[pIdx] += (newMills - oldMills);
-    newState.millsFormed = newMillsFormed;
-    millJustFormed = true;
-  }
-
-  if (millJustFormed) {
     const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
     const removable = getRemovablePieces(newBoard, opponent);
     if (removable.length > 0) {
@@ -230,14 +184,12 @@ export function removePiece(state: GameState, pos: number): GameState {
   const newPiecesOnBoard: [number, number] = [...state.piecesOnBoard];
   newPiecesOnBoard[oppIdx]--;
 
-  const newState: GameState = {
+  return advanceTurn({
     ...state,
     board: newBoard,
     piecesOnBoard: newPiecesOnBoard,
     removingPiece: false,
-  };
-
-  return advanceTurn(newState);
+  });
 }
 
 export function selectPiece(state: GameState, pos: number): GameState {
@@ -249,11 +201,12 @@ export function selectPiece(state: GameState, pos: number): GameState {
     return { ...state, message: 'この駒は動かせません' };
   }
 
-  const flying = isFlying(state.board, state.currentPlayer);
   return {
     ...state,
     selectedPiece: pos,
-    message: flying ? '🦅 フライトモード - 移動先を選択' : '移動先を選択してください',
+    message: isFlying(state.board, state.currentPlayer)
+      ? '🦅 フライトモード - 移動先を選択'
+      : '移動先を選択してください',
   };
 }
 
@@ -269,26 +222,14 @@ export function movePiece(state: GameState, from: number, to: number): GameState
   newBoard[from] = 0;
   newBoard[to] = state.currentPlayer;
 
-  const pIdx = state.currentPlayer - 1;
-  const newMillsFormed: [number, number] = [...state.millsFormed];
-  let millJustFormed = false;
-
   let newState: GameState = {
     ...state,
     board: newBoard,
     selectedPiece: null,
-    moveCount: state.moveCount + 1,
   };
 
+  // Check if mill formed
   if (formsMill(newBoard, to, state.currentPlayer)) {
-    const newMills = countMills(newBoard, state.currentPlayer);
-    const oldMills = countMills(state.board, state.currentPlayer);
-    newMillsFormed[pIdx] += (newMills - oldMills);
-    newState.millsFormed = newMillsFormed;
-    millJustFormed = true;
-  }
-
-  if (millJustFormed) {
     const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
     const removable = getRemovablePieces(newBoard, opponent);
     if (removable.length > 0) {
@@ -309,6 +250,7 @@ function advanceTurn(state: GameState): GameState {
   const nextPlayer: Player = state.currentPlayer === 1 ? 2 : 1;
   const nextIdx = nextPlayer - 1;
 
+  // Check win: opponent has < 3 total pieces
   const nextTotal = state.piecesToPlace[nextIdx] + state.piecesOnBoard[nextIdx];
   if (nextTotal < 3) {
     return {
@@ -316,11 +258,12 @@ function advanceTurn(state: GameState): GameState {
       currentPlayer: nextPlayer,
       winner: state.currentPlayer,
       message: state.currentPlayer === 1
-        ? '🎉 おめでとうございます！あなたの勝利です！'
-        : '😔 AIの勝利...もう一度挑戦しましょう！',
+        ? '🎉 あなたの勝利です！'
+        : '😔 AIの勝利...',
     };
   }
 
+  // Check if we should transition to moving phase
   if (state.piecesToPlace[0] === 0 && state.piecesToPlace[1] === 0 && state.phase === 'placing') {
     const canMove = hasValidMoves(state.board, nextPlayer);
     if (!canMove) {
@@ -330,43 +273,34 @@ function advanceTurn(state: GameState): GameState {
         phase: 'moving',
         winner: state.currentPlayer,
         message: state.currentPlayer === 1
-          ? '🎉 相手が動けません！あなたの勝利です！'
+          ? '🎉 相手が動けません！あなたの勝利！'
           : '😔 AIの勝利...',
       };
     }
-    const flying = isFlying(state.board, nextPlayer);
     return {
       ...state,
       currentPlayer: nextPlayer,
       phase: 'moving',
       selectedPiece: null,
       message: nextPlayer === 1
-        ? (flying ? '🦅 移動フェーズ開始！フライトモード' : '🔄 移動フェーズ開始！駒を移動してください')
+        ? (isFlying(state.board, nextPlayer) ? '🦅 移動フェーズ開始！フライトモード' : '🔄 移動フェーズ開始！')
         : 'AIの番です...',
     };
   }
 
+  // Still in placing phase
   if (state.phase === 'placing') {
-    if (state.piecesToPlace[nextIdx] > 0) {
-      return {
-        ...state,
-        currentPlayer: nextPlayer,
-        selectedPiece: null,
-        message: nextPlayer === 1
-          ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
-          : 'AIの番です...',
-      };
-    } else {
-      return {
-        ...state,
-        selectedPiece: null,
-        message: state.currentPlayer === 1
-          ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
-          : 'AIの番です...',
-      };
-    }
+    return {
+      ...state,
+      currentPlayer: state.piecesToPlace[nextIdx] > 0 ? nextPlayer : state.currentPlayer,
+      selectedPiece: null,
+      message: (state.piecesToPlace[nextIdx] > 0 ? nextPlayer : state.currentPlayer) === 1
+        ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
+        : 'AIの番です...',
+    };
   }
 
+  // Moving phase
   const canMove = hasValidMoves(state.board, nextPlayer);
   if (!canMove) {
     return {
@@ -375,19 +309,18 @@ function advanceTurn(state: GameState): GameState {
       phase: 'moving',
       winner: state.currentPlayer,
       message: state.currentPlayer === 1
-        ? '🎉 相手が動けません！あなたの勝利です！'
+        ? '🎉 相手が動けません！あなたの勝利！'
         : '😔 AIの勝利...',
     };
   }
 
-  const flying = isFlying(state.board, nextPlayer);
   return {
     ...state,
     currentPlayer: nextPlayer,
     phase: 'moving',
     selectedPiece: null,
     message: nextPlayer === 1
-      ? (flying ? '🦅 あなたの番 - フライトモード！' : '🔄 あなたの番 - 駒を移動してください')
+      ? (isFlying(state.board, nextPlayer) ? '🦅 あなたの番 - フライトモード！' : '🔄 あなたの番 - 駒を移動してください')
       : 'AIの番です...',
   };
 }

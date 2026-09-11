@@ -1,5 +1,24 @@
 @import "tailwindcss";
 
+/* Piece animation */
+@keyframes piece-in {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-piece-in {
+  animation: piece-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* Smooth transitions */
 * {
   -webkit-tap-highlight-color: transparent;
@@ -32,4 +51,13 @@ html, body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(167, 139, 250, 0.5);
+}
+
+/* Button hover effects */
+button {
+  transition: all 0.2s ease;
+}
+
+button:active {
+  transform: scale(0.95);
 }

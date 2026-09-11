@@ -13,6 +13,7 @@ export interface GameState {
   winner: Player | null;
   selectedPiece: number | null;
   message: string;
+  moveCount: number;
 }
 
 // 24 positions on the board
@@ -73,6 +74,7 @@ export function createInitialState(): GameState {
     winner: null,
     selectedPiece: null,
     message: 'あなたの番です - 駒を配置してください',
+    moveCount: 0,
   };
 }
 
@@ -151,6 +153,7 @@ export function placePiece(state: GameState, pos: number): GameState {
     board: newBoard,
     piecesToPlace: newPiecesToPlace,
     piecesOnBoard: newPiecesOnBoard,
+    moveCount: state.moveCount + 1,
   };
 
   // Check if mill formed
@@ -226,6 +229,7 @@ export function movePiece(state: GameState, from: number, to: number): GameState
     ...state,
     board: newBoard,
     selectedPiece: null,
+    moveCount: state.moveCount + 1,
   };
 
   // Check if mill formed

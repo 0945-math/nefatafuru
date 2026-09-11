@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   GameState, createInitialState, Player,
   POS_COORDS, MILLS,
@@ -7,6 +7,7 @@ import {
   isFlying,
 } from './gameLogic';
 import { getAIMove, AIMove } from './ai';
+import { soundManager } from './sounds';
 
 // Board lines
 const BOARD_LINES: [number, number][] = [
@@ -39,12 +40,45 @@ function App() {
   const [difficulty, setDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal');
   const [gameStarted, setGameStarted] = useState(false);
   const [playerColor, setPlayerColor] = useState<'dark' | 'light'>('dark');
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [animatingPieces, setAnimatingPieces] = useState<Set<number>>(new Set());
+  const [showRules, setShowRules] = useState(false);
+  const prevBoardRef = useRef<(0 | 1 | 2)[]>(Array(24).fill(0));
 
   const resetGame = useCallback(() => {
     setGameState(createInitialState());
     setAiThinking(false);
     setGameStarted(true);
+    setAnimatingPieces(new Set());
+    prevBoardRef.current = Array(24).fill(0);
   }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled(prev => {
+      soundManager.setEnabled(!prev);
+      return !prev;
+    });
+  }, []);
+
+  // Track board changes for animations
+  useEffect(() => {
+    const prev = prevBoardRef.current;
+    const curr = gameState.board;
+    const newAnimating = new Set<number>();
+    
+    for (let i = 0; i < 24; i++) {
+      if (prev[i] !== curr[i]) {
+        newAnimating.add(i);
+      }
+    }
+    
+    if (newAnimating.size > 0) {
+      setAnimatingPieces(newAnimating);
+      setTimeout(() => setAnimatingPieces(new Set()), 300);
+    }
+    
+    prevBoardRef.current = [...curr];
+  }, [gameState.board]);
 
   // AI move execution
   useEffect(() => {
@@ -57,6 +91,7 @@ function App() {
           if (!prev.removingPiece || prev.currentPlayer !== 2) return prev;
           const removable = getRemovablePieces(prev.board, 1);
           if (removable.length > 0) {
+            soundManager.playRemove();
             return removePiece(prev, removable[0]);
           }
           return { ...prev, removingPiece: false };
@@ -76,6 +111,7 @@ function App() {
           message: '🎉 AIが動けません！あなたの勝利です！',
         }));
         setAiThinking(false);
+        soundManager.playWin();
         return;
       }
 
@@ -83,9 +119,11 @@ function App() {
         let newState = { ...prev };
 
         if (newState.phase === 'placing') {
+          soundManager.playPlace();
           newState = placePiece(newState, aiMove.to);
         } else {
           if (aiMove.from !== undefined) {
+            soundManager.playMove();
             newState = selectPiece(newState, aiMove.from);
             newState = movePiece(newState, aiMove.from!, aiMove.to);
           }
@@ -93,12 +131,14 @@ function App() {
 
         // Handle AI removal
         if (newState.removingPiece && newState.currentPlayer === 2) {
+          soundManager.playMill();
           const removal = aiMove.removal !== undefined && aiMove.removal >= 0
             ? aiMove.removal
             : getRemovablePieces(newState.board, 1)[0];
           
           if (removal !== undefined) {
             setTimeout(() => {
+              soundManager.playRemove();
               setGameState(p => {
                 if (!p.removingPiece || p.currentPlayer !== 2) return p;
                 return removePiece(p, removal);
@@ -119,12 +159,24 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.currentPlayer, gameState.winner, gameState.removingPiece, gameStarted, difficulty]);
 
+  // Play win/lose sounds
+  useEffect(() => {
+    if (gameState.winner) {
+      if (gameState.winner === 1) {
+        soundManager.playWin();
+      } else {
+        soundManager.playLose();
+      }
+    }
+  }, [gameState.winner]);
+
   const handlePositionClick = useCallback((pos: number) => {
     if (!gameStarted || gameState.winner || gameState.currentPlayer !== 1 || aiThinking) return;
 
     if (gameState.removingPiece) {
       const removable = getRemovablePieces(gameState.board, 2);
       if (removable.includes(pos)) {
+        soundManager.playRemove();
         setGameState(prev => removePiece(prev, pos));
       }
       return;
@@ -133,7 +185,14 @@ function App() {
     if (gameState.phase === 'placing') {
       const valid = getValidPlacements(gameState.board);
       if (valid.includes(pos)) {
-        setGameState(prev => placePiece(prev, pos));
+        soundManager.playPlace();
+        setGameState(prev => {
+          const newState = placePiece(prev, pos);
+          if (newState.removingPiece) {
+            soundManager.playMill();
+          }
+          return newState;
+        });
       }
       return;
     }
@@ -146,7 +205,14 @@ function App() {
       if (gameState.selectedPiece !== null && gameState.board[pos] === 0) {
         const targets = getValidTargets(gameState.board, gameState.selectedPiece, 1);
         if (targets.includes(pos)) {
-          setGameState(prev => movePiece(prev, gameState.selectedPiece!, pos));
+          soundManager.playMove();
+          setGameState(prev => {
+            const newState = movePiece(prev, gameState.selectedPiece!, pos);
+            if (newState.removingPiece) {
+              soundManager.playMill();
+            }
+            return newState;
+          });
         }
       }
     }
@@ -241,6 +307,14 @@ function App() {
               </div>
             </div>
 
+            {/* Rules button */}
+            <button
+              onClick={() => setShowRules(true)}
+              className="w-full bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-3 px-4 rounded-xl transition-all text-sm border border-white/10"
+            >
+              📖 ルールを見る
+            </button>
+
             {/* Start button */}
             <button
               onClick={resetGame}
@@ -250,6 +324,60 @@ function App() {
             </button>
           </div>
         </div>
+
+        {/* Rules Modal */}
+        {showRules && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-gradient-to-br from-slate-800 to-purple-900 rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/20">
+              <h2 className="text-3xl font-bold text-white mb-6">📖 モラバラバのルール</h2>
+              
+              <div className="space-y-4 text-purple-200">
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">🎯 ゲームの目的</h3>
+                  <p>相手の駒を2個以下にする、または相手が動けなくする</p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">📍 配置フェーズ</h3>
+                  <p>各プレイヤー12個の駒を交互に空いている交点に配置します</p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">🔄 移動フェーズ</h3>
+                  <p>駒を隣接する空いている点に移動します</p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">🦅 フライトフェーズ</h3>
+                  <p>駒が3個になったら、どこにでも移動できるようになります</p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">✨ ミル（3つ並べ）</h3>
+                  <p>直線上に3つ並べると「ミル」成立！相手の駒を1つ取ることができます</p>
+                  <p className="text-sm mt-2 text-purple-300">※ミルを構成している駒は取れませんが、全ての駒がミルの場合は取れます</p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">💡 戦略のコツ</h3>
+                  <ul className="list-disc list-inside space-y-1 text-sm">
+                    <li>中央の交点は価値が高い</li>
+                    <li>2つ並べたら3つ目を狙う</li>
+                    <li>相手のミルを阻止しよう</li>
+                    <li>複数のミルを同時に狙うと強力</li>
+                  </ul>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowRules(false)}
+                className="w-full mt-6 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold py-3 px-6 rounded-xl transition-all"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -361,8 +489,20 @@ function App() {
               </div>
             </div>
 
+            {/* Move counter */}
+            <div className="bg-white/5 rounded-lg p-3 text-center border border-white/10">
+              <div className="text-purple-300 text-xs">手数</div>
+              <div className="text-white font-bold text-2xl">{gameState.moveCount}</div>
+            </div>
+
             {/* Buttons */}
             <div className="flex gap-2">
+              <button
+                onClick={toggleSound}
+                className="flex-1 bg-white/10 hover:bg-white/20 text-purple-200 font-medium py-2 px-3 rounded-lg transition-all text-sm border border-white/10"
+              >
+                {soundEnabled ? '🔊' : '🔇'}
+              </button>
               <button
                 onClick={resetGame}
                 className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-medium py-2 px-3 rounded-lg transition-all text-sm"
@@ -489,7 +629,7 @@ function App() {
 
                     {/* Player 1 piece */}
                     {cellState === 1 && (
-                      <>
+                      <g className={animatingPieces.has(pos) ? 'animate-piece-in' : ''}>
                         <circle cx={cx} cy={cy + 2} r={20} fill="rgba(0,0,0,0.3)" />
                         <circle
                           cx={cx}
@@ -502,12 +642,12 @@ function App() {
                         />
                         <circle cx={cx - 6} cy={cy - 6} r={7} fill="rgba(255,255,255,0.2)" />
                         <circle cx={cx - 4} cy={cy - 4} r={3} fill="rgba(255,255,255,0.3)" />
-                      </>
+                      </g>
                     )}
 
                     {/* Player 2 (AI) piece */}
                     {cellState === 2 && (
-                      <>
+                      <g className={animatingPieces.has(pos) ? 'animate-piece-in' : ''}>
                         <circle cx={cx} cy={cy + 2} r={20} fill="rgba(0,0,0,0.3)" />
                         <circle
                           cx={cx}
@@ -520,7 +660,7 @@ function App() {
                         />
                         <circle cx={cx - 6} cy={cy - 6} r={7} fill="rgba(255,255,255,0.2)" />
                         <circle cx={cx - 4} cy={cy - 4} r={3} fill="rgba(255,255,255,0.3)" />
-                      </>
+                      </g>
                     )}
                   </g>
                 );
@@ -568,6 +708,38 @@ function App() {
                 ? '見事です！AIを打ち負かしました！'
                 : 'AIに敗れました。再挑戦しましょう！'}
             </p>
+            
+            {/* Game Statistics */}
+            <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+              <h3 className="text-white font-bold mb-3 text-sm">📊 ゲーム統計</h3>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-purple-500/10 rounded-lg p-2">
+                  <div className="text-purple-300 text-xs">総手数</div>
+                  <div className="text-white font-bold text-lg">{gameState.moveCount}</div>
+                </div>
+                <div className="bg-amber-500/10 rounded-lg p-2">
+                  <div className="text-amber-300 text-xs">難易度</div>
+                  <div className="text-white font-bold text-lg">{difficulty === 'easy' ? '簡単' : difficulty === 'normal' ? '普通' : '難しい'}</div>
+                </div>
+                <div className="bg-blue-500/10 rounded-lg p-2">
+                  <div className="text-blue-300 text-xs">あなたの駒</div>
+                  <div className="text-white font-bold text-lg">{gameState.piecesOnBoard[0]}</div>
+                </div>
+                <div className="bg-red-500/10 rounded-lg p-2">
+                  <div className="text-red-300 text-xs">AIの駒</div>
+                  <div className="text-white font-bold text-lg">{gameState.piecesOnBoard[1]}</div>
+                </div>
+                <div className="bg-blue-500/10 rounded-lg p-2">
+                  <div className="text-blue-300 text-xs">あなたのミル</div>
+                  <div className="text-white font-bold text-lg">{activeMills.filter(m => m.player === 1).length}</div>
+                </div>
+                <div className="bg-red-500/10 rounded-lg p-2">
+                  <div className="text-red-300 text-xs">AIのミル</div>
+                  <div className="text-white font-bold text-lg">{activeMills.filter(m => m.player === 2).length}</div>
+                </div>
+              </div>
+            </div>
+
             <div className="flex gap-3 justify-center">
               <button
                 onClick={resetGame}

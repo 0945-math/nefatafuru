@@ -1,14 +1,18 @@
-// モラバラバ (Morabaraba) - シンプルで堅牢なゲームロジック
+// モラバラバ (Morabaraba) - ゲームロジック
 
+// ============== 型定義 ==============
 export type Player = 1 | 2;
-export type Board = (0 | 1 | 2)[];
+export type CellState = 0 | 1 | 2;
+export type Board = CellState[];
+export type Phase = 'placing' | 'moving';
+export type PiecesCount = [number, number]; // [player1, player2]
 
 export interface GameState {
   board: Board;
   currentPlayer: Player;
-  phase: 'placing' | 'moving';
-  piecesToPlace: [number, number];
-  piecesOnBoard: [number, number];
+  phase: Phase;
+  piecesToPlace: PiecesCount;
+  piecesOnBoard: PiecesCount;
   removingPiece: boolean;
   winner: Player | null;
   selectedPiece: number | null;
@@ -16,7 +20,11 @@ export interface GameState {
   moveCount: number;
 }
 
-// 24 positions on the board
+// ============== 定数 ==============
+export const BOARD_SIZE = 24;
+export const INITIAL_PIECES = 12;
+
+// 隣接リスト
 export const ADJACENCY: number[][] = [
   [1, 9],        // 0
   [0, 2, 4],     // 1
@@ -44,6 +52,7 @@ export const ADJACENCY: number[][] = [
   [22, 14],      // 23
 ];
 
+// ミル（3つ並べ）の定義
 export const MILLS: number[][] = [
   [0, 1, 2], [2, 14, 23], [21, 22, 23], [0, 9, 21],
   [3, 4, 5], [5, 13, 20], [18, 19, 20], [3, 10, 18],
@@ -51,7 +60,7 @@ export const MILLS: number[][] = [
   [1, 4, 7], [16, 19, 22], [9, 10, 11], [12, 13, 14],
 ];
 
-// Visual coordinates (grid 0-6)
+// 視覚座標（グリッド 0-6）
 export const POS_COORDS: { x: number; y: number }[] = [
   { x: 0, y: 0 }, { x: 3, y: 0 }, { x: 6, y: 0 },
   { x: 1, y: 1 }, { x: 3, y: 1 }, { x: 5, y: 1 },
@@ -63,12 +72,17 @@ export const POS_COORDS: { x: number; y: number }[] = [
   { x: 0, y: 6 }, { x: 3, y: 6 }, { x: 6, y: 6 },
 ];
 
+// ============== ヘルパー関数 ==============
+export const getPlayerIndex = (player: Player): number => player - 1;
+export const getOpponent = (player: Player): Player => player === 1 ? 2 : 1;
+
+// ============== 初期状態 ==============
 export function createInitialState(): GameState {
   return {
-    board: Array(24).fill(0),
+    board: Array(BOARD_SIZE).fill(0) as Board,
     currentPlayer: 1,
     phase: 'placing',
-    piecesToPlace: [12, 12],
+    piecesToPlace: [INITIAL_PIECES, INITIAL_PIECES],
     piecesOnBoard: [0, 0],
     removingPiece: false,
     winner: null,
@@ -78,6 +92,7 @@ export function createInitialState(): GameState {
   };
 }
 
+// ============== 判定関数 ==============
 export function isInMill(board: Board, pos: number): boolean {
   const player = board[pos];
   if (player === 0) return false;
@@ -89,8 +104,9 @@ export function isInMill(board: Board, pos: number): boolean {
 export function canRemovePiece(board: Board, pos: number, opponent: Player): boolean {
   if (board[pos] !== opponent) return false;
   if (!isInMill(board, pos)) return true;
-  // Can remove if all opponent pieces are in mills
-  for (let i = 0; i < 24; i++) {
+  
+  // 全ての相手の駒がミルに含まれている場合のみ、ミルの駒を取れる
+  for (let i = 0; i < BOARD_SIZE; i++) {
     if (board[i] === opponent && !isInMill(board, i)) {
       return false;
     }
@@ -104,51 +120,97 @@ export function isFlying(board: Board, player: Player): boolean {
 
 export function hasValidMoves(board: Board, player: Player): boolean {
   const flying = isFlying(board, player);
-  for (let from = 0; from < 24; from++) {
+  
+  for (let from = 0; from < BOARD_SIZE; from++) {
     if (board[from] !== player) continue;
+    
     if (flying) {
       if (board.some(c => c === 0)) return true;
     } else {
       if (ADJACENCY[from].some(to => board[to] === 0)) return true;
     }
   }
+  
   return false;
 }
 
+// ============== 有効手取得関数 ==============
 export function getValidPlacements(board: Board): number[] {
-  return board.map((c, i) => c === 0 ? i : -1).filter(i => i >= 0);
+  return board
+    .map((cell, index) => cell === 0 ? index : -1)
+    .filter(index => index >= 0);
 }
 
 export function getValidTargets(board: Board, from: number, player: Player): number[] {
   if (isFlying(board, player)) {
-    return board.map((c, i) => c === 0 && i !== from ? i : -1).filter(i => i >= 0);
+    return board
+      .map((cell, index) => cell === 0 && index !== from ? index : -1)
+      .filter(index => index >= 0);
   }
-  return ADJACENCY[from].filter(i => board[i] === 0);
+  return ADJACENCY[from].filter(to => board[to] === 0);
 }
 
 export function getRemovablePieces(board: Board, opponent: Player): number[] {
-  return board.map((c, i) => c === opponent && canRemovePiece(board, i, opponent) ? i : -1).filter(i => i >= 0);
+  return board
+    .map((cell, index) => cell === opponent && canRemovePiece(board, index, opponent) ? index : -1)
+    .filter(index => index >= 0);
 }
 
+// ============== 内部ヘルパー ==============
 function formsMill(board: Board, pos: number, player: Player): boolean {
   return MILLS.some(mill =>
     mill.includes(pos) && mill.every(p => board[p] === player)
   );
 }
 
-export function placePiece(state: GameState, pos: number): GameState {
-  if (state.board[pos] !== 0 || state.phase !== 'placing' || state.winner) return state;
+function createNewBoard(board: Board): Board {
+  return [...board] as Board;
+}
 
-  const pIdx = state.currentPlayer - 1;
-  const newBoard = [...state.board] as Board;
+function checkMillAndHandleRemoval(
+  state: GameState,
+  newBoard: Board,
+  pos: number
+): GameState {
+  if (!formsMill(newBoard, pos, state.currentPlayer)) {
+    return advanceTurn(state);
+  }
+
+  const opponent = getOpponent(state.currentPlayer);
+  const removable = getRemovablePieces(newBoard, opponent);
+  
+  if (removable.length === 0) {
+    return advanceTurn(state);
+  }
+
+  const message = state.currentPlayer === 1
+    ? '🎯 ミル成立！相手の駒を1つ選んで取ってください'
+    : 'AIが駒を取ります...';
+
+  return {
+    ...state,
+    board: newBoard,
+    removingPiece: true,
+    message,
+  };
+}
+
+// ============== ゲームアクション ==============
+export function placePiece(state: GameState, pos: number): GameState {
+  if (state.board[pos] !== 0 || state.phase !== 'placing' || state.winner) {
+    return state;
+  }
+
+  const playerIdx = getPlayerIndex(state.currentPlayer);
+  const newBoard = createNewBoard(state.board);
   newBoard[pos] = state.currentPlayer;
 
-  const newPiecesToPlace: [number, number] = [...state.piecesToPlace];
-  const newPiecesOnBoard: [number, number] = [...state.piecesOnBoard];
-  newPiecesToPlace[pIdx]--;
-  newPiecesOnBoard[pIdx]++;
+  const newPiecesToPlace: PiecesCount = [...state.piecesToPlace];
+  const newPiecesOnBoard: PiecesCount = [...state.piecesOnBoard];
+  newPiecesToPlace[playerIdx]--;
+  newPiecesOnBoard[playerIdx]++;
 
-  let newState: GameState = {
+  const newState: GameState = {
     ...state,
     board: newBoard,
     piecesToPlace: newPiecesToPlace,
@@ -156,36 +218,21 @@ export function placePiece(state: GameState, pos: number): GameState {
     moveCount: state.moveCount + 1,
   };
 
-  // Check if mill formed
-  if (formsMill(newBoard, pos, state.currentPlayer)) {
-    const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
-    const removable = getRemovablePieces(newBoard, opponent);
-    if (removable.length > 0) {
-      return {
-        ...newState,
-        removingPiece: true,
-        message: state.currentPlayer === 1
-          ? '🎯 ミル成立！相手の駒を1つ選んで取ってください'
-          : 'AIが駒を取ります...',
-      };
-    }
-  }
-
-  return advanceTurn(newState);
+  return checkMillAndHandleRemoval(newState, newBoard, pos);
 }
 
 export function removePiece(state: GameState, pos: number): GameState {
   if (!state.removingPiece || state.winner) return state;
 
-  const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
+  const opponent = getOpponent(state.currentPlayer);
   if (!canRemovePiece(state.board, pos, opponent)) return state;
 
-  const newBoard = [...state.board] as Board;
+  const newBoard = createNewBoard(state.board);
   newBoard[pos] = 0;
 
-  const oppIdx = opponent - 1;
-  const newPiecesOnBoard: [number, number] = [...state.piecesOnBoard];
-  newPiecesOnBoard[oppIdx]--;
+  const opponentIdx = getPlayerIndex(opponent);
+  const newPiecesOnBoard: PiecesCount = [...state.piecesOnBoard];
+  newPiecesOnBoard[opponentIdx]--;
 
   return advanceTurn({
     ...state,
@@ -204,12 +251,14 @@ export function selectPiece(state: GameState, pos: number): GameState {
     return { ...state, message: 'この駒は動かせません' };
   }
 
+  const message = isFlying(state.board, state.currentPlayer)
+    ? '🦅 フライトモード - 移動先を選択'
+    : '移動先を選択してください';
+
   return {
     ...state,
     selectedPiece: pos,
-    message: isFlying(state.board, state.currentPlayer)
-      ? '🦅 フライトモード - 移動先を選択'
-      : '移動先を選択してください',
+    message,
   };
 }
 
@@ -221,110 +270,113 @@ export function movePiece(state: GameState, from: number, to: number): GameState
   const flying = isFlying(state.board, state.currentPlayer);
   if (!flying && !ADJACENCY[from].includes(to)) return state;
 
-  const newBoard = [...state.board] as Board;
+  const newBoard = createNewBoard(state.board);
   newBoard[from] = 0;
   newBoard[to] = state.currentPlayer;
 
-  let newState: GameState = {
+  const newState: GameState = {
     ...state,
     board: newBoard,
     selectedPiece: null,
     moveCount: state.moveCount + 1,
   };
 
-  // Check if mill formed
-  if (formsMill(newBoard, to, state.currentPlayer)) {
-    const opponent: Player = state.currentPlayer === 1 ? 2 : 1;
-    const removable = getRemovablePieces(newBoard, opponent);
-    if (removable.length > 0) {
-      return {
-        ...newState,
-        removingPiece: true,
-        message: state.currentPlayer === 1
-          ? '🎯 ミル成立！相手の駒を1つ選んで取ってください'
-          : 'AIが駒を取ります...',
-      };
-    }
-  }
-
-  return advanceTurn(newState);
+  return checkMillAndHandleRemoval(newState, newBoard, to);
 }
 
+// ============== ターン進行 ==============
 function advanceTurn(state: GameState): GameState {
-  const nextPlayer: Player = state.currentPlayer === 1 ? 2 : 1;
-  const nextIdx = nextPlayer - 1;
+  const nextPlayer = getOpponent(state.currentPlayer);
+  const nextPlayerIdx = getPlayerIndex(nextPlayer);
 
-  // Check win: opponent has < 3 total pieces
-  const nextTotal = state.piecesToPlace[nextIdx] + state.piecesOnBoard[nextIdx];
+  // 勝利判定
+  const nextTotal = state.piecesToPlace[nextPlayerIdx] + state.piecesOnBoard[nextPlayerIdx];
   if (nextTotal < 3) {
+    const message = state.currentPlayer === 1
+      ? '🎉 あなたの勝利です！'
+      : '😔 AIの勝利...';
+
     return {
       ...state,
       currentPlayer: nextPlayer,
       winner: state.currentPlayer,
-      message: state.currentPlayer === 1
-        ? '🎉 あなたの勝利です！'
-        : '😔 AIの勝利...',
+      message,
     };
   }
 
-  // Check if we should transition to moving phase
+  // 移動フェーズへの移行
   if (state.piecesToPlace[0] === 0 && state.piecesToPlace[1] === 0 && state.phase === 'placing') {
     const canMove = hasValidMoves(state.board, nextPlayer);
+    
     if (!canMove) {
+      const message = state.currentPlayer === 1
+        ? '🎉 相手が動けません！あなたの勝利！'
+        : '😔 AIの勝利...';
+
       return {
         ...state,
         currentPlayer: nextPlayer,
         phase: 'moving',
         winner: state.currentPlayer,
-        message: state.currentPlayer === 1
-          ? '🎉 相手が動けません！あなたの勝利！'
-          : '😔 AIの勝利...',
+        message,
       };
     }
+
+    const flying = isFlying(state.board, nextPlayer);
+    const message = nextPlayer === 1
+      ? (flying ? '🦅 移動フェーズ開始！フライトモード' : '🔄 移動フェーズ開始！')
+      : 'AIの番です...';
+
     return {
       ...state,
       currentPlayer: nextPlayer,
       phase: 'moving',
       selectedPiece: null,
-      message: nextPlayer === 1
-        ? (isFlying(state.board, nextPlayer) ? '🦅 移動フェーズ開始！フライトモード' : '🔄 移動フェーズ開始！')
-        : 'AIの番です...',
+      message,
     };
   }
 
-  // Still in placing phase
+  // 配置フェーズ中
   if (state.phase === 'placing') {
+    const activePlayer = state.piecesToPlace[nextPlayerIdx] > 0 ? nextPlayer : state.currentPlayer;
+    const message = activePlayer === 1
+      ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
+      : 'AIの番です...';
+
     return {
       ...state,
-      currentPlayer: state.piecesToPlace[nextIdx] > 0 ? nextPlayer : state.currentPlayer,
+      currentPlayer: activePlayer,
       selectedPiece: null,
-      message: (state.piecesToPlace[nextIdx] > 0 ? nextPlayer : state.currentPlayer) === 1
-        ? `あなたの番です - 駒を配置してください（残り${state.piecesToPlace[0]}個）`
-        : 'AIの番です...',
+      message,
     };
   }
 
-  // Moving phase
+  // 移動フェーズ中
   const canMove = hasValidMoves(state.board, nextPlayer);
   if (!canMove) {
+    const message = state.currentPlayer === 1
+      ? '🎉 相手が動けません！あなたの勝利！'
+      : '😔 AIの勝利...';
+
     return {
       ...state,
       currentPlayer: nextPlayer,
       phase: 'moving',
       winner: state.currentPlayer,
-      message: state.currentPlayer === 1
-        ? '🎉 相手が動けません！あなたの勝利！'
-        : '😔 AIの勝利...',
+      message,
     };
   }
+
+  const flying = isFlying(state.board, nextPlayer);
+  const message = nextPlayer === 1
+    ? (flying ? '🦅 あなたの番 - フライトモード！' : '🔄 あなたの番 - 駒を移動してください')
+    : 'AIの番です...';
 
   return {
     ...state,
     currentPlayer: nextPlayer,
     phase: 'moving',
     selectedPiece: null,
-    message: nextPlayer === 1
-      ? (isFlying(state.board, nextPlayer) ? '🦅 あなたの番 - フライトモード！' : '🔄 あなたの番 - 駒を移動してください')
-      : 'AIの番です...',
+    message,
   };
 }
